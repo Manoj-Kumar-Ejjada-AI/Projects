@@ -1,0 +1,4 @@
+mcp
+mcp[cli]
+fastmcp
+fastmcp[apps]
