@@ -1,7 +1,7 @@
-from mcp.server import FastMCP
+from mcp.server.mcpserver import MCPServer
 # from fastmcp import FastMCP
 
-mcp = FastMCP("Customer Server")
+mcp = MCPServer("Customer Server")
 
 @mcp.tool()
 def get_customer(customer_id: int) -> dict:
