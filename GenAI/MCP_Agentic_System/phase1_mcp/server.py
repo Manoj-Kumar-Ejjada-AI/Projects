@@ -62,17 +62,17 @@ def get_order(order_id: int) -> dict:
     "Return details of order"
     orders = {
         101: {
-            "customer": "Manoj",
+            "customer_id": 1,
             "product": "Laptop",
             "status": "Shipped"
         },
         102: {
-            "customer": "Manoj",
+            "customer_id": 1,
             "product": "Phone",
             "status": "Delivered"
         },
         103: {
-            "customer": "Anil",
+            "customer_id": 2,
             "product": "Tab",
             "status": "Processing"
         }
