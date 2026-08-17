@@ -59,7 +59,7 @@ def list_customers() -> list:
 
 @mcp.tool()
 def get_order(order_id: int) -> dict:
-    "Return details of order"
+    """Return details of order by order id"""
     orders = {
         101: {
             "customer_id": 1,
@@ -78,12 +78,14 @@ def get_order(order_id: int) -> dict:
         }
     }
 
-    if order_id is None:
+    order = orders.get(order_id)
+
+    if order is None:
         return {
             "error": "Order not found"
         }
     
-    return orders[order_id]
+    return order
 
 if __name__ == "__main__":
     mcp.run()
