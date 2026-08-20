@@ -13,17 +13,11 @@ class ToolInputValidator:
             )
 
         except JsonSchemaValidationError as exc:
-            return {
-                "valid":  False,
-                "error": {
-                    "code": "INVALID_TOOL_ARGUMENTS",
-                    "message": str(exc),
-                    "retryable": False
-                }
-            }
+            return StructuredError(
+                code = ErrorCode.INVALID_TOOL_ARGUMENTS,
+                message=exc.message,
+                details=str(exc)
+            )
 
-        return {
-            "valid": True,
-            "arguments": arguments
-        }
+        return None
             

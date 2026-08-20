@@ -1,14 +1,18 @@
 from llm import call_llm
 import json
 from validation.schemas import ToolInputValidator
+from errors.framework import ErrorCode, StructuredError
 
 class Agent:
-    def __init__(self, llm, model: str, mcp_client, tool_registry, max_iterations: int = 5):
+    def __init__(self, llm, model: str, tool_executor, tool_registry, max_iterations: int = 5):
         self.llm = llm
         self.model = model
-        self.mcp_client = mcp_client
+        # self.mcp_client = mcp_client
         self.tool_registry = tool_registry
+        self.tool_executor = tool_executor
         self.max_iterations = max_iterations
+
+        self.validate = ToolInputValidator()
 
     async def run(self, user_message):
 
@@ -41,20 +45,18 @@ class Agent:
                 tool_name = tool_call.function.name
 
                 if not self.tool_registry.has_tool(tool_name):
-                    tool_result = {
-                        "error": {
-                            "code": "UNKNOWN_TOOL",
-                            "message": (
-                                f"Tool {tool_name} doesn't exist"
-                            ),
-                            "retryable": False
-                        }
-                    }
+                    error = StructuredError(
+                        code = ErrorCode.UNKNOWN_TOOL,
+                        message= f"Tool '{tool_name}' does not exist",
+                        retryable= False
+                    )
 
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": json.dumps(tool_result)
+                        "content": json.dumps({
+                                        "error":error.to_dict()
+                                            })
                     })
 
                     continue
@@ -65,30 +67,27 @@ class Agent:
                         )
 
                 except json.JSONDecodeError as exc:
-                    tool_result = {
-                        "error": {
-                            "code": "INVALID_TOOL_ARGUMENTS",
-                            "message": (
-                                "The tool arguments returned "
-                                f" by the LLM are not valid JSON {exc}"
-                            ),
-                            "retyrable": False
-                        }
-                    }
+                    error = StructuredError(
+                        code=ErrorCode.INVLAID_JSON,
+                        message= "Tool arguments are not valid JSON",
+                        retryable= False
+                    )
 
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": json.dumps(tool_result)
+                        "content": json.dumps({
+                            "error": error.to_dict()
+                        })
                     })
 
                     continue
 
                 tool = self.tool_registry.get_tool(tool_name)
 
-                validation = ToolInputValidator.validate(tool, tool_args)
+                validation = self.validate.validate(tool, tool_args)
 
-                if not validation.get("valid"):
+                if validation is not None:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -97,10 +96,17 @@ class Agent:
 
                     continue
 
-                tool_result = await self.mcp_client.call_tool(
+                # tool_result = await self.mcp_client.call_tool(
+                #     tool_name,
+                #     tool_args
+                # )
+                tool_result, tool_error = await self.tool_executor.execute(
                     tool_name,
                     tool_args
                 )
+
+                if tool_error:
+                    tool_result = json.dumps(tool_error.to_dict())
 
                 messages.append(
                     {
