@@ -8,6 +8,7 @@ import asyncio
 from agent import Agent
 from mcp_client import MCPClient
 from tool_registry import ToolRegistry
+from tools.base import ToolExecutor
 
 async def main():
     llm = AsyncOpenAI(
@@ -27,7 +28,9 @@ async def main():
 
         tool_registry = ToolRegistry(mcp_tools.tools)
 
-        agent = Agent(llm, model, mcp_client, tool_registry)
+        tool_exector = ToolExecutor(mcp_client=mcp_client)
+
+        agent = Agent(llm, model, tool_exector, tool_registry)
 
         user_message = input("Enter your query: ")
 
