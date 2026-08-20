@@ -1,5 +1,6 @@
 from llm import call_llm
 import json
+from validation.schemas import ToolInputValidator
 
 class Agent:
     def __init__(self, llm, model: str, mcp_client, tool_registry, max_iterations: int = 5):
@@ -83,7 +84,18 @@ class Agent:
 
                     continue
 
+                tool = self.tool_registry.get_tool(tool_name)
 
+                validation = ToolInputValidator.validate(tool, tool_args)
+
+                if not validation.get("valid"):
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(validation)
+                    })
+
+                    continue
 
                 tool_result = await self.mcp_client.call_tool(
                     tool_name,
