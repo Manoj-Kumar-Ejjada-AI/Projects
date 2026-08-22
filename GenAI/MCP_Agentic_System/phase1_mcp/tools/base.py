@@ -4,12 +4,15 @@ import asyncio
 class ToolExecutor:
     def __init__(self, 
                  mcp_client,
-                 timeout_seconds=10
+                 timeout_seconds=100,
+                 retry_policy = None
                  ):
         self.mcp_client = mcp_client
         self.timeout_seconds = timeout_seconds
+        self.retry_policy = retry_policy
 
-    async def execute(self, tool_name, arguments):
+
+    async def _execute_once(self, tool_name, arguments):
         try:
             async with asyncio.timeout():
                 result = await self.mcp_client.call_tool(
@@ -18,6 +21,9 @@ class ToolExecutor:
                     )
                 return result, None
 
+        except asyncio.CancelledError:
+            raise
+        
         except TimeoutError:
             error = StructuredError(
                 code = ErrorCode.TOOL_TIMEOUT,
@@ -41,5 +47,19 @@ class ToolExecutor:
             )
 
             return None, error
+
+    async def execute(self, tool_name, arguments):
+
+        if self.retry_policy is None:
+            return await self._execute_once(
+                tool_name,
+                arguments
+            )
+        return await self.retry_policy.execute(
+            lambda: self._execute_once(
+                tool_name,
+                arguments
+            )
+        )
 
 
