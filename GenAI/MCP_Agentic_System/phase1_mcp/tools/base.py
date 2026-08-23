@@ -14,7 +14,7 @@ class ToolExecutor:
 
     async def _execute_once(self, tool_name, arguments):
         try:
-            async with asyncio.timeout():
+            async with asyncio.timeout(self.timeout_seconds):
                 result = await self.mcp_client.call_tool(
                     tool_name, 
                     arguments
