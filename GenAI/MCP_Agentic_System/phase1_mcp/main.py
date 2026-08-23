@@ -16,7 +16,8 @@ async def main():
             base_url = base_url
         )
 
-    model = "gemini-3.6-flash"
+    # model = "gemini-3.6-flash"
+    model = "gemma-4-31b-it"
 
     server_params = StdioServerParameters(
         command="python",

@@ -1,7 +1,8 @@
 import asyncio
 from errors.framework import ErrorCode, StructuredError
+import random
 
-class Retry:
+class RetryPolicy:
     def __init__(self,
                  max_attempts,
                  base_delay):
@@ -13,24 +14,36 @@ class Retry:
 
         for attempt in range(1, self.max_attempts+1):
 
-            result, error = await operation()
+            try:
 
-            if error is None:
-                return result, None
+                result, error = await operation()
 
-            if not error.retryable:
-                return None, error
+                if error is None:
+                    return result, None
+    
+                if not error.retryable:
+                    return None, error
 
-            last_error = error
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as e:
+                last_error = e
+
             
             if attempt >= self.max_attempts:
                 break
 
-            delay = self.base_delay * (
+            backoff = self.base_delay * (
                 2 ** (attempt-1)
             )
 
-            asyncio.sleep(delay)
+            delay = random.uniform(
+                0,
+                backoff
+            )
+
+            await asyncio.sleep(delay)
         return None, last_error
 
 
