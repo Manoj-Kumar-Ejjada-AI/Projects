@@ -4,7 +4,7 @@ import asyncio
 class ToolExecutor:
     def __init__(self, 
                  mcp_client,
-                 timeout_seconds=100,
+                 timeout_seconds=10,
                  retry_policy = None
                  ):
         self.mcp_client = mcp_client
