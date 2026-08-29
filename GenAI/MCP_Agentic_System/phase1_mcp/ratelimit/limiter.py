@@ -15,7 +15,7 @@ class RateLimiter:
         self.capacity = capacity
         self.refill_rate = refill_rate
 
-        self._buckets: dict[str: Bucket] = {}
+        self._buckets: dict[str, Bucket] = {}
 
         self._lock = asyncio.Lock()
 
@@ -29,6 +29,7 @@ class RateLimiter:
 
         bucket.tokens = min(
             self.capacity,
+            bucket.tokens +
             elapsed * self.refill_rate
         )
 
