@@ -1,110 +1,243 @@
 import json
-import hashlib
 from dataclasses import dataclass
 import asyncio
 import time
-
-def build_cache_key(
-        tool_name,
-        arguments
-        ):
-
-    payload = json.dumps(
-        arguments,
-        sort_keys=True,
-        separators=(",",":")
-    )
-
-    digest = hashlib.sha256(
-        payload.encode("utf-8")
-    ).hexdigest()
-
-    return f"tool:{tool_name}:{digest}"
+from collections import OrderedDict
+from redis.asyncio import Redis
 
 @dataclass
-class CacheEntry:
+class L1Entry:
     value: object
     expires_at: float
 
 
-class CacheManager:
-    def __init__(self):
+class L1Cache:
 
-        self._cache = {}
+    def __init__(
+            self,
+            max_items: int):
 
+        self.max_items = max_items
+
+        self.store = OrderedDict()
         self._lock = asyncio.Lock()
 
-        self._key_locks = dict[
-            str, asyncio.Lock()
-        ] = {}
+    async def get(
+            self,
+            key):
 
-    async def get(self,
-                  key: str):
+        entry = self.store.get(key)
+
+        if entry is None:
+            return None
+
+        if entry.expires_at <= time.monotonic():
+
+            self.store.pop(
+                key,
+                None
+            )
+
+            return None
+        self.store.move_to_end(
+            key
+        )
+
+        return entry.value
+
+    async def set(
+            self,
+            key,
+            value,
+            ttl_seconds
+    ):
+        async with self._lock:
+
+            self.store[key] = L1Entry(
+                value=value,
+                expires_at = (
+                    time.monotonic() +
+                    ttl_seconds
+                )
+            )
+
+            self.store.move_to_end(
+                key
+            )
+
+            while len(self.store) > self.max_items:
+                self.store.popitem(last=False)
+
+    async def delete(
+            self,
+            key
+            ):
 
         async with self._lock:
-            entry = self._cache.get(key)
 
-            if entry is None:
-                return None
+            self.store.pop(
+                key,
+                None)
+            
 
-            if (time.monotonic() >= entry.expires_at):
-                del self._cache[key]
-                return None
+class CacheManager:
 
-            return entry.value
+    def __init__(
+            self,
+            redis_url: str,
+            l1_max_items: int = 1000,
+            l1_ttl_seconds: int = 10,
+            l2_ttl_secons: int = 30):
+
+        self.l1 = L1Cache(
+            l1_max_items
+        )
+
+        self.redis_url = redis_url
+
+        self.l1_ttl_seconds = l1_ttl_seconds
+
+        self.l2_ttl_seconds = self.l2_ttl_seconds
+
+    async def connect(self):
+
+        self.redis = Redis.from_url(
+            self.redis_url
+        )
+
+    async def disconnect(self):
+
+        if self.redis is not None:
+
+            self.redis.close()
+
+            self.redis = None
+
+    async def get(
+            self,
+            key):
+
+        # L1 cache
+
+        value = await self.l1.get(key)
+
+        if value is not None:
+            return value
+
+        # L2 cache
+
+        if self.redis is None:
+            return None
+
+        raw = self.redis.get(key)
+
+        if raw is None:
+            return None
+
+        value = json.loads(
+            value
+        )
+        
+        await self.l1.set(
+            key=key,
+            value=value,
+            ttl_seconds=self.l1_ttl_seconds
+        )
+
+        return value
 
     async def set(self,
                   key,
                   value,
-                  ttl):
-        expires_at = time.monotonic()+ttl
+                  ttl = None):
 
-        async with self._lock:
+        ttl_l2 = self.l2_ttl_seconds or ttl
 
-            self._cache[key] = CacheEntry(
-                value=value,
-                expires_at=expires_at
+        ttl_l1 = min(
+            ttl_l2,
+            self.l1_ttl_seconds
+        )
+
+        await self.l1.set(
+            key=key,
+            value=value,
+            ttl_seconds=ttl_l1
+        )
+
+        if self.redis is not None:
+
+            await self.redis.set(
+                key,
+                json.dumps(
+                    value,
+                    default=str
+                ),
+                ex=ttl_l2
             )
 
-    async def _get_key_lock(
-            self,
-            key
-    ):
-        async with self._lock:
-            lock = self._key_locks.get(key)
-
-            if key is None:
-                lock = asyncio.Lock()
-
-                self._key_locks[key] = lock
-            return lock
-
-
-    async def get_or_set(
+    async def get_or_compute(
             self,
             key,
-            loader,
-            ttl
+            compute,
+            ttl = None,
+            STAMPEDE_LOCK_TTL_MS = 5000,
+            STAMPEDE_WAIT_MS = 50
     ):
-        value = await self.get(key)
 
-        if value is not None:
-            return value, True
+        hit = self.get(key=key)
 
-        key_lock = self._get_key_lock(key)
+        if hit is not None:
+            return hit
 
-        async with key_lock:
+        if self.redis is None:
+            raise RuntimeError(
+                "CacheManager is not connected"
+            )
 
-            value = self.get(key)
+        lock_key = f"{key}:lock"
 
-            if value is not None:
-                return value, None
+        got_lock = self.redis.set(
+            lock_key,
+            "1",
+            nx=True,
+            px=STAMPEDE_LOCK_TTL_MS
+        )
 
-            value = await loader()
+        if got_lock:
 
-            await self.set(
-                key,
-                value,
-                ttl)
+            try:
+                value = await compute()
 
-            return value, False
+                self.set(
+                    key=key,
+                    value=value,
+                    ttl=ttl
+                )
+
+                return value
+            
+            finally:
+
+                await self.redis.delete(
+                    lock_key
+                )
+
+        for _ in range(20):
+            asyncio.sleep(
+                STAMPEDE_WAIT_MS/1000
+            )
+
+            hit = await self.get(key)
+
+            if hit is not None:
+                return hit
+
+        value = await compute()
+
+        self.set(
+            key=key,
+            value=value,
+            ttl=ttl
+        )
+
+        return value
