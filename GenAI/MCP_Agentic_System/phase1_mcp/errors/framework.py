@@ -22,18 +22,27 @@ class StructuredError:
     code: str
     message: str
     retryable: bool = False
+    hint: str | None = None
     counts_toward_circuit_breaker: bool = False
     details: dict[str, Any] = field(default_factory=dict)
 
 
     def to_dict(self):
-        return {
+
+        payload = {
             "code": self.code,
             "message": self.message,
             "retryable": self.retryable,
-            "counts_toward_circuit_breaker": self.counts_toward_circuit_breaker,
-            "details": self.details
+            "counts_toward_circuit_breaker": self.counts_toward_circuit_breaker
         }
+
+        if self.hint is not None:
+            payload["hint"] = self.hint
+
+        if self.details:
+            payload["details"] = self.details
+
+        return payload
 
 class ToolExecutionException(Exception):
     def __init__(self, error: StructuredError):
