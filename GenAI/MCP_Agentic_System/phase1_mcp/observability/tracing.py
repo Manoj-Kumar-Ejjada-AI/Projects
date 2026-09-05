@@ -7,6 +7,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
 )
+from opentelemetry.trace import Status, StatusCode
 
 
 _INITIALISED = False
@@ -74,3 +75,20 @@ def current_trace_id():
         return None
 
     return f"{context.trace_id:032x}"
+
+
+
+def record_span_error(
+        span, 
+        error
+        ):
+    try:
+        span.record_exception(error)
+        span.set_status(
+            Status(
+                StatusCode.ERROR,
+                str(error)
+            )
+        )
+    except Exception:
+        pass
