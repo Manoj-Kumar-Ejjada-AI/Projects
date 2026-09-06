@@ -6,6 +6,8 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
+    SimpleSpanProcessor,
+    ConsoleSpanExporter
 )
 from opentelemetry.trace import Status, StatusCode
 
@@ -15,7 +17,7 @@ _INITIALISED = False
 
 def init_tracing(
     service_name: str,
-    otel_endpoint: str,
+    # otel_endpoint: str,           # Comment for local tracing
     ):
 
     global _INITIALISED
@@ -34,13 +36,17 @@ def init_tracing(
             resource=resource
         )
 
-    exporter = OTLPSpanExporter(
-            endpoint=otel_endpoint,
-            insecure=True,
-        )
+    # exporter = OTLPSpanExporter(
+    #         endpoint=otel_endpoint,
+    #         insecure=True,
+    #     )                                 # Comment for local tracing
+
+    exporter = ConsoleSpanExporter()        # For local tracing
 
     provider.add_span_processor(
-            BatchSpanProcessor(exporter)
+            # BatchSpanProcessor(exporter)          # Comment for local tracing
+            SimpleSpanProcessor(exporter)           # For local tracing
+
         )
 
     trace.set_tracer_provider(
