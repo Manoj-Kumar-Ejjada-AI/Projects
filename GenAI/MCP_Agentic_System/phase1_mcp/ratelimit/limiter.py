@@ -96,7 +96,7 @@ class RateLimiter:
             self.redis_url
         )
 
-        await self._script_sha = (
+        self._script_sha = (
             await self._redis.script_load(
             RATE_LIMIT_SCRIPT
             )

@@ -10,7 +10,15 @@ from mcp_client import MCPClient
 from tool_registry import ToolRegistry
 from tools.base import ToolExecutor
 
+from observability.tracing import init_tracing
+
 async def main():
+
+    init_tracing(
+        "mcp-agentic-system",
+        # "http://localhost:4317"
+    )
+
     llm = AsyncOpenAI(
             api_key = OPENAI_API_KEY,
             base_url = base_url

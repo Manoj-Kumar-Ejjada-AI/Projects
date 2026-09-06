@@ -2,6 +2,14 @@ from errors.framework import ErrorCode, StructuredError
 import asyncio
 from reliability.circuitBreaker import CircuitBreaker
 from reliability.retry import RetryPolicy
+from ratelimit.limiter import RateLimiter
+from observability.tracing import (
+    get_tracer,
+    record_span_error,
+    current_trace_id
+)
+from opentelemetry.trace import Status, StatusCode
+
 
 class ToolExecutor:
     def __init__(self, 
@@ -9,13 +17,17 @@ class ToolExecutor:
                  timeout_seconds=10,
                  overall_timeout_seconds = 30,
                  retry_policy: RetryPolicy|None = None,
-                 circuit_breaker: CircuitBreaker|None = None
+                 circuit_breaker: CircuitBreaker|None = None,
+                 rate_limiter: RateLimiter|None = None
                  ):
         self.mcp_client = mcp_client
         self.timeout_seconds = timeout_seconds
         self.overall_timeout_seconds = overall_timeout_seconds
         self.retry_policy = retry_policy
         self.circuit_breaker = circuit_breaker
+        self.rate_limiter = rate_limiter
+
+        self.tracer = get_tracer()
 
     def _remaining_time(self, deadline):
 
@@ -32,129 +44,325 @@ class ToolExecutor:
                             arguments,
                             deadline):
 
-        remaining = self._remaining_time(
-            deadline
-        )
 
-        if remaining <= 0:
-            error = StructuredError(
-                code=ErrorCode.EXECUTION_DEADLINE_EXCEEDED,
-                message=(
-                f"Overall execution budget for "
-                f"tool '{tool_name}' has expired."
-                ),
-                retryable=False,
-                counts_toward_circuit_breaker=False
+        with self.tracer.start_as_current_span(
+            "tool.attempt"
+            ) as span:
 
+            span.set_attribute(
+                "tool.name",
+                tool_name
             )
-            return None, error
 
-        attempt_timeout = min(
-            self.timeout_seconds,
-            remaining
-        )
-
-        try:
-            async with asyncio.timeout(attempt_timeout):
-                result = await self.mcp_client.call_tool(
-                    tool_name, 
-                    arguments
+            remaining = self._remaining_time(
+                        deadline
                     )
-                return result, None
 
-        except asyncio.CancelledError:
-            raise
-        
-        except TimeoutError:
-            error = StructuredError(
-                code = ErrorCode.TOOL_TIMEOUT,
-                message=(
-                f"Tool '{tool_name}' exceeded "
-                f"its {attempt_timeout:.2f}s "
-                "attempt timeout."
-                ),
-                retryable=True,
-                details= {
-                    "Timeout_seconds": attempt_timeout
-                }
+            if remaining <= 0:
+
+                error = StructuredError(
+                    code=ErrorCode.EXECUTION_DEADLINE_EXCEEDED,
+                    message=(
+                    f"Overall execution budget for "
+                    f"tool '{tool_name}' has expired."
+                    ),
+                    retryable=False,
+                    counts_toward_circuit_breaker=False
+
+                )
+
+                span.set_attribute(
+                    "tool.error_code",
+                    error.code
+                )
+
+                span.set_status(
+                    Status(
+                        StatusCode.ERROR,
+                        str(error.message)
+                    )
+                )
+
+                return None, error
+
+            attempt_timeout = min(
+                self.timeout_seconds,
+                remaining
             )
 
-            return None, error
-
-        except (ConnectionError, OSError,) as exc:
-            error = StructuredError(
-                code= ErrorCode.TOOL_EXECUTION_ERROR,
-                message=(
-                    f"Tool '{tool_name}' encountered a transient connection failure"
-                ),
-                retryable=True,
-                counts_toward_circuit_breaker= True,
-                details={
-                    "exception": str(exc)
-                }
-            )
-        
-        except Exception as exc:
-            error = StructuredError(
-                code = ErrorCode.TOOL_EXECUTION_ERROR,
-                message= f"Tool '{tool_name}' failed.",
-                retryable= False,
-                counts_toward_circuit_breaker=False,
-                details= {
-                    "exception": str(exc)
-                }
+            span.set_attribute(
+                "tool.timeout_seconds",
+                attempt_timeout
             )
 
-            return None, error
+            try:
+
+                with self.tracer.start_as_current_span(
+                    "mcp.call"
+                ) as mcp_span:
+                    
+                    mcp_span.set_attribute(
+                        "tool.name",
+                        tool_name
+                    )
+
+                    async with asyncio.timeout(attempt_timeout):
+                        result = await self.mcp_client.call_tool(
+                            tool_name, 
+                            arguments
+                            )
+
+                    mcp_span.set_status(
+                        StatusCode.OK
+                    )
+
+                    return result, None
+
+            except asyncio.CancelledError:
+
+                span.set_attribute(
+                    "tool.cancelled",
+                    True
+                )
+
+                raise
+            
+            except TimeoutError:
+                error = StructuredError(
+                    code = ErrorCode.TOOL_TIMEOUT,
+                    message=(
+                    f"Tool '{tool_name}' exceeded "
+                    f"its {attempt_timeout:.2f}s "
+                    "attempt timeout."
+                    ),
+                    retryable=True,
+                    details= {
+                        "Timeout_seconds": attempt_timeout
+                    }
+                )
+
+                span.set_attribute(
+                    "tool.error_code",
+                    error.code
+                )
+
+                record_span_error(
+                    span,
+                    exc
+                )
+
+                return None, error
+
+            except (ConnectionError, OSError,) as exc:
+
+                error = StructuredError(
+                    code= ErrorCode.TOOL_EXECUTION_ERROR,
+                    message=(
+                        f"Tool '{tool_name}' encountered a transient connection failure"
+                    ),
+                    retryable=True,
+                    counts_toward_circuit_breaker= True,
+                    details={
+                        "exception": str(exc)
+                    }
+                )
+
+                span.set_attribute(
+                    "tool.error_code",
+                    error.code
+                )
+
+                record_span_error(
+                    span,
+                    exc
+                )
+
+                return None, error
+                
+            except Exception as exc:
+                error = StructuredError(
+                    code = ErrorCode.TOOL_EXECUTION_ERROR,
+                    message= f"Tool '{tool_name}' failed.",
+                    retryable= False,
+                    counts_toward_circuit_breaker=False,
+                    details= {
+                        "exception": str(exc)
+                    }
+                )
+
+                span.set_attribute(
+                    "tool.error_code",
+                    error.code
+                )
+
+                record_span_error(
+                    span,
+                    exc
+                )
+
+                return None, error
 
     async def execute(self, tool_name, arguments):
 
-        loop = asyncio.get_running_loop()
+        with self.tracer.start_as_current_span(
+            "tool.execute"
+            ) as execute_span:
 
-        deadline = loop.time() + self.overall_timeout_seconds
-
-        async def operation():
-
-            if self.retry_policy is None:
-                return await self._execute_once(
-                    tool_name,
-                    arguments,
-                    deadline
-                )
-            return await self.retry_policy.execute(
-                lambda: self._execute_once(
-                    tool_name,
-                    arguments,
-                    deadline
-                )
+            execute_span.set_attribute(
+                "tool.name",
+                tool_name
             )
-        try:
-            async with asyncio.timeout(
-                self.overall_timeout_seconds
-            ):
-                if self.circuit_breaker is not None:
-                    return await (self.circuit_breaker.execute(
-                        operation 
+
+            trace_id = current_trace_id()
+
+            if trace_id:
+                execute_span.set_attribute(
+                    "trace.id",
+                    trace_id
+                )
+
+
+            if self.rate_limiter is not None:
+
+                with self.tracer.start_as_current_span(
+                    "rate_limit"
+                ) as rate_span:
+                    
+                    rate_span.set_attribute(
+                        "tool.name",
+                        tool_name
+                    )
+
+                    allowed, retry_after = await self.rate_limiter.acquire(
+                        key=tool_name
+                    )
+
+                    rate_span.set_attribute(
+                        "ratelimit.allowed",
+                        allowed
+                    )
+
+                    if retry_after is not None:
+
+                        rate_span.set_attribute(
+                            "ratelimit.retry_after",
+                            retry_after
+                        )
+
+                
+
+                    if not allowed:
+
+                        error = StructuredError(
+                            code = ErrorCode.RATE_LIMITED,
+                            message= f"Tool '{tool_name}' is rate limited",
+                            retryable=True,
+                            counts_toward_circuit_breaker=False,
+                            details={
+                                "retry_after": retry_after
+                            }
+                        )
+
+                        execute_span.set_attribute(
+                            "tool.error_code",
+                            error.code
+                        )
+
+                        execute_span.set_status(
+                            Status(
+                                StatusCode.ERROR,
+                                error.message
+                            )
+                        )
+
+
+                        return None, error
+
+
+
+            loop = asyncio.get_running_loop()
+
+            deadline = loop.time() + self.overall_timeout_seconds
+
+            async def operation():
+
+                if self.retry_policy is None:
+                    return await self._execute_once(
+                        tool_name,
+                        arguments,
+                        deadline
+                    )
+
+                with self.tracer.start_as_current_span(
+                    "retry"
+                ) as retry_span:
+
+                    retry_span.set_attribute(
+                        "tool.name",
+                        tool_name
+                    )
+                
+                    return await self.retry_policy.execute(
+                        lambda: self._execute_once(
+                            tool_name,
+                            arguments,
+                            deadline
                         )
                     )
-                return await operation()
-            
-        except asyncio.CancelledError:
-            raise
+            try:
+                async with asyncio.timeout(
+                    self.overall_timeout_seconds
+                ):
+                    if self.circuit_breaker is not None:
 
-        except asyncio.TimeoutError:
-            error = StructuredError(
-                code=ErrorCode.EXECUTION_DEADLINE_EXCEEDED,
-                message=(
-                f"Overall execution budget for "
-                f"tool '{tool_name}' was exceeded."
-                ),
-                retryable=True,
-                counts_toward_circuit_breaker=True,
-                details={
-                    "overall_timeout": self.overall_timeout_seconds
-                }
-            )
+                        with self.tracer.start_as_current_span(
+                            "circuit_breaker"
+                        ) as circuit_span:
 
+                            circuit_span.set_attribute(
+                                "tool.name",
+                                tool_name
+                            )
 
+                            return await (self.circuit_breaker.execute(
+                                operation 
+                                )
+                            )
+                    return await operation()
+                
+            except asyncio.CancelledError:
+
+                execute_span.set_attribute(
+                    "tool.cancelled",
+                    True
+                )
+
+                raise
+
+            except asyncio.TimeoutError as exc:
+
+                error = StructuredError(
+                    code=ErrorCode.EXECUTION_DEADLINE_EXCEEDED,
+                    message=(
+                    f"Overall execution budget for "
+                    f"tool '{tool_name}' was exceeded."
+                    ),
+                    retryable=True,
+                    counts_toward_circuit_breaker=True,
+                    details={
+                        "overall_timeout": self.overall_timeout_seconds
+                    }
+                )
+
+                execute_span.set_attribute(
+                    "tool.error_code",
+                    error.code
+                )
+
+                record_span_error(
+                    execute_span,
+                    exc
+                )
+
+                return None, error
 
