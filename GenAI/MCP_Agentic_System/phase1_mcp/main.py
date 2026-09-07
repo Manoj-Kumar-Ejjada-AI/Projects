@@ -11,6 +11,8 @@ from tool_registry import ToolRegistry
 from tools.base import ToolExecutor
 
 from observability.tracing import init_tracing
+from observability.metrics import MetricsRegistry
+from prometheus_client import start_http_server
 
 async def main():
 
@@ -37,7 +39,18 @@ async def main():
 
         tool_registry = ToolRegistry(mcp_tools.tools)
 
-        tool_executor = ToolExecutor(mcp_client=mcp_client)
+        metrics_registry = MetricsRegistry()
+
+        start_http_server(
+            8000,
+            registry=metrics_registry.registry
+        )
+
+
+        tool_executor = ToolExecutor(
+            mcp_client=mcp_client,
+            metrics=metrics_registry
+            )
 
         agent = Agent(llm, model, tool_executor, tool_registry)
 

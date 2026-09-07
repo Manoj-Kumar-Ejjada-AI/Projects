@@ -9,17 +9,24 @@ from observability.tracing import (
     current_trace_id
 )
 from opentelemetry.trace import Status, StatusCode
+import time
+from observability.metrics import MetricsRegistry
+from cache.manager import CacheManager
 
 
 class ToolExecutor:
-    def __init__(self, 
-                 mcp_client,
-                 timeout_seconds=10,
-                 overall_timeout_seconds = 30,
-                 retry_policy: RetryPolicy|None = None,
-                 circuit_breaker: CircuitBreaker|None = None,
-                 rate_limiter: RateLimiter|None = None
-                 ):
+    def __init__(
+                self, 
+                mcp_client,
+                timeout_seconds=10,
+                overall_timeout_seconds = 30,
+                retry_policy: RetryPolicy|None = None,
+                circuit_breaker: CircuitBreaker|None = None,
+                rate_limiter: RateLimiter | None = None,
+                metrics: MetricsRegistry | None = None,
+                cache_manager: CacheManager | None = None,
+                ):
+        
         self.mcp_client = mcp_client
         self.timeout_seconds = timeout_seconds
         self.overall_timeout_seconds = overall_timeout_seconds
@@ -28,6 +35,9 @@ class ToolExecutor:
         self.rate_limiter = rate_limiter
 
         self.tracer = get_tracer()
+        self.metrics = metrics
+
+        self.cache_manager = cache_manager
 
     def _remaining_time(self, deadline):
 
@@ -37,6 +47,27 @@ class ToolExecutor:
             0,
             deadline - loop.time()
         )
+
+    def record_metrics(
+            self,
+            tool_name,
+            result,
+            error,
+            duration
+    ):
+        if self.metrics is None:
+            return
+
+        status = "success" if error is None else "error"
+
+        self.metrics.calls_total.labels(
+            tool = tool_name,
+            status = status
+        ).inc()
+
+        self.metrics.latency.labels(
+            tool = tool_name
+        ).observe(duration)
 
 
     async def _execute_once(self, 
@@ -204,6 +235,9 @@ class ToolExecutor:
 
     async def execute(self, tool_name, arguments):
 
+        start = time.perf_counter()
+        status = "error"
+
         with self.tracer.start_as_current_span(
             "tool.execute"
             ) as execute_span:
@@ -309,6 +343,7 @@ class ToolExecutor:
                             deadline
                         )
                     )
+
             try:
                 async with asyncio.timeout(
                     self.overall_timeout_seconds
@@ -329,6 +364,9 @@ class ToolExecutor:
                                 )
                             )
                     return await operation()
+
+                if error is None:
+                    status = "success"
                 
             except asyncio.CancelledError:
 
@@ -354,6 +392,8 @@ class ToolExecutor:
                     }
                 )
 
+                status = "error"
+                
                 execute_span.set_attribute(
                     "tool.error_code",
                     error.code
@@ -365,4 +405,21 @@ class ToolExecutor:
                 )
 
                 return None, error
+
+            finally:
+
+                duration = time.perf_counter() - start
+
+                if self.metrics is not None:
+
+                    self.metrics.calls_total.labels(
+                        tool = tool_name,
+                        status = status
+                    ).inc()
+
+                    self.metrics.latency.labels(
+                        tool = tool_name
+                    ).observe(duration)
+
+
 
