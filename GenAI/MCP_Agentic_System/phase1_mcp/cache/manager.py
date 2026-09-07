@@ -5,6 +5,8 @@ import time
 from collections import OrderedDict
 from redis.asyncio import Redis
 
+from observability.metrics import MetricsRegistry
+
 @dataclass
 class L1Entry:
     value: object
@@ -15,7 +17,8 @@ class L1Cache:
 
     def __init__(
             self,
-            max_items: int):
+            max_items: int,
+            ):
 
         self.max_items = max_items
 
@@ -39,6 +42,7 @@ class L1Cache:
             )
 
             return None
+        
         self.store.move_to_end(
             key
         )
@@ -77,7 +81,8 @@ class L1Cache:
 
             self.store.pop(
                 key,
-                None)
+                None
+                )
             
 
 class CacheManager:
@@ -87,7 +92,8 @@ class CacheManager:
             redis_url: str,
             l1_max_items: int = 1000,
             l1_ttl_seconds: int = 10,
-            l2_ttl_secons: int = 30):
+            l2_ttl_seconds: int = 30,
+            metrics: MetricsRegistry | None = None):
 
         self.l1 = L1Cache(
             l1_max_items
@@ -97,7 +103,9 @@ class CacheManager:
 
         self.l1_ttl_seconds = l1_ttl_seconds
 
-        self.l2_ttl_seconds = self.l2_ttl_seconds
+        self.l2_ttl_seconds = l2_ttl_seconds
+
+        self.metrics = metrics
 
     async def connect(self):
 
@@ -109,19 +117,26 @@ class CacheManager:
 
         if self.redis is not None:
 
-            self.redis.close()
+            await self.redis.close()
 
             self.redis = None
 
     async def get(
             self,
-            key):
+            key,
+            tool_name: str | None = None,
+            ):
 
         # L1 cache
 
         value = await self.l1.get(key)
 
         if value is not None:
+
+            if self.metrics and tool_name:
+                self.metrics.cache_hit.labels(
+                    tool = tool_name
+                ).inc()
             return value
 
         # L2 cache
@@ -129,13 +144,24 @@ class CacheManager:
         if self.redis is None:
             return None
 
-        raw = self.redis.get(key)
+        raw = await self.redis.get(key)
 
         if raw is None:
+
+            if self.metrics and tool_name:
+                self.metrics.cache_miss.labels(
+                    tool = tool_name
+                ).inc()
+
             return None
 
+        if self.metrics and tool_name:
+            self.metrics.cache_hit.labels(
+                tool = tool_name
+            ).inc()
+
         value = json.loads(
-            value
+            raw
         )
         
         await self.l1.set(
@@ -181,13 +207,19 @@ class CacheManager:
             compute,
             ttl = None,
             STAMPEDE_LOCK_TTL_MS = 5000,
-            STAMPEDE_WAIT_MS = 50
+            STAMPEDE_WAIT_MS = 50,
+            tool_name: str |None = None,
     ):
 
-        hit = self.get(key=key)
+        hit = await self.get(key=key)
 
         if hit is not None:
             return hit
+
+        if self.metrics and tool_name:
+            self.metrics.cache_miss.labels(
+                tool = tool_name
+            ).inc()
 
         if self.redis is None:
             raise RuntimeError(
@@ -196,7 +228,7 @@ class CacheManager:
 
         lock_key = f"{key}:lock"
 
-        got_lock = self.redis.set(
+        got_lock = await self.redis.set(
             lock_key,
             "1",
             nx=True,
@@ -208,7 +240,7 @@ class CacheManager:
             try:
                 value = await compute()
 
-                self.set(
+                await self.set(
                     key=key,
                     value=value,
                     ttl=ttl
@@ -223,7 +255,7 @@ class CacheManager:
                 )
 
         for _ in range(20):
-            asyncio.sleep(
+            await asyncio.sleep(
                 STAMPEDE_WAIT_MS/1000
             )
 
@@ -234,7 +266,7 @@ class CacheManager:
 
         value = await compute()
 
-        self.set(
+        await self.set(
             key=key,
             value=value,
             ttl=ttl
