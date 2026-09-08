@@ -11,7 +11,10 @@ from observability.tracing import (
 from opentelemetry.trace import Status, StatusCode
 import time
 from observability.metrics import MetricsRegistry
-from cache.manager import CacheManager
+from cache.manager import (
+    CacheManager,
+    build_cache_key
+)
 
 
 class ToolExecutor:
@@ -51,14 +54,11 @@ class ToolExecutor:
     def record_metrics(
             self,
             tool_name,
-            result,
-            error,
+            status,
             duration
     ):
         if self.metrics is None:
             return
-
-        status = "success" if error is None else "error"
 
         self.metrics.calls_total.labels(
             tool = tool_name,
@@ -233,6 +233,56 @@ class ToolExecutor:
 
                 return None, error
 
+    async def _execute_with_policies(
+            self,
+            tool_name,
+            arguments,
+            deadline
+    ):
+        async def operation():
+
+            if self.retry_policy is None:
+                return await self._execute_once(
+                    tool_name,
+                    arguments,
+                    deadline
+                )
+
+            with self.tracer.start_as_current_span(
+                "retry"
+            ) as retry_span:
+                
+                retry_span.set_attribute(
+                    "tool.name",
+                    tool_name
+                )
+
+                return await self.retry_policy.execute(
+                    lambda: self._execute_once(
+                        tool_name,
+                        arguments,
+                        deadline
+                    )
+                )
+
+        if self.circuit_breaker is not None:
+
+            with self.tracer.start_as_current_span(
+                "circuit_breaker"
+            ) as circuit_breaker_span:
+
+                circuit_breaker_span.set_attribute(
+                    "tool.name",
+                    tool_name
+                )
+
+                return await self.circuit_breaker.execute(
+                    operation
+                )
+
+        return await operation()
+
+
     async def execute(self, tool_name, arguments):
 
         start = time.perf_counter()
@@ -318,55 +368,64 @@ class ToolExecutor:
 
             deadline = loop.time() + self.overall_timeout_seconds
 
-            async def operation():
+            cache_key = None
 
-                if self.retry_policy is None:
-                    return await self._execute_once(
-                        tool_name,
-                        arguments,
-                        deadline
-                    )
+            if self.cache_manager is not None:
 
-                with self.tracer.start_as_current_span(
-                    "retry"
-                ) as retry_span:
+                cache_key = build_cache_key(
+                    tool_name,
+                    arguments
+                )
 
-                    retry_span.set_attribute(
-                        "tool.name",
-                        tool_name
-                    )
-                
-                    return await self.retry_policy.execute(
-                        lambda: self._execute_once(
-                            tool_name,
-                            arguments,
-                            deadline
-                        )
-                    )
+            
+
+            async def compute():
+
+                return await self._execute_with_policies(
+                    tool_name,
+                    arguments,
+                    deadline
+                )
+
 
             try:
                 async with asyncio.timeout(
                     self.overall_timeout_seconds
                 ):
-                    if self.circuit_breaker is not None:
+                    if self.cache_manager is not None:
+                        result, error = await self.cache_manager.get_or_compute(
+                            key = cache_key,
+                            compute=compute,
+                            tool_name= tool_name
+                        )
+                    result, error = await compute()
 
-                        with self.tracer.start_as_current_span(
-                            "circuit_breaker"
-                        ) as circuit_span:
+                
+                status = "success" if error is None else "error"
 
-                            circuit_span.set_attribute(
-                                "tool.name",
-                                tool_name
-                            )
+                if error is not None:
+                
+                    execute_span.set_attribute(
+                        "tool.error_code",
+                        error.code
+                    )
 
-                            return await (self.circuit_breaker.execute(
-                                operation 
-                                )
-                            )
-                    return await operation()
+                    execute_span.set_status(
+                        Status(
+                            StatusCode.ERROR,
+                            error.message
+                        )
+                    )
 
-                if error is None:
-                    status = "success"
+                else:
+
+                    execute_span.set_status(
+                        StatusCode.OK
+                    )
+
+                return result, error
+
+
                 
             except asyncio.CancelledError:
 
@@ -410,16 +469,11 @@ class ToolExecutor:
 
                 duration = time.perf_counter() - start
 
-                if self.metrics is not None:
-
-                    self.metrics.calls_total.labels(
-                        tool = tool_name,
-                        status = status
-                    ).inc()
-
-                    self.metrics.latency.labels(
-                        tool = tool_name
-                    ).observe(duration)
+                self.record_metrics(
+                    tool_name,
+                    status,
+                    duration
+                )
 
 
 

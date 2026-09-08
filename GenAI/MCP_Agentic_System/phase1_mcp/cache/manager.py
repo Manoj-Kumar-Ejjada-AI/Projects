@@ -6,6 +6,7 @@ from collections import OrderedDict
 from redis.asyncio import Redis
 
 from observability.metrics import MetricsRegistry
+import hashlib
 
 @dataclass
 class L1Entry:
@@ -273,3 +274,20 @@ class CacheManager:
         )
 
         return value
+
+
+def build_cache_key(
+        tool_name,
+        arguments
+):
+    canonical_arguments = json.dumps(
+        arguments,
+        sort_keys=True,
+        separators=(",",":")
+    )
+
+    arguments_hash = hashlib.sha256(
+        canonical_arguments.encode("utf-8")
+    ).hexdigest()
+
+    return f"tool:{tool_name}:{arguments_hash}"
