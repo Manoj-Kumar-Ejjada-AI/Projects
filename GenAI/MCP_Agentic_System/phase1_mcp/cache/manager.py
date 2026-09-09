@@ -125,7 +125,6 @@ class CacheManager:
     async def get(
             self,
             key,
-            tool_name: str | None = None,
             ):
 
         # L1 cache
@@ -134,10 +133,10 @@ class CacheManager:
 
         if value is not None:
 
-            if self.metrics and tool_name:
-                self.metrics.cache_hit.labels(
-                    tool = tool_name
-                ).inc()
+            # if self.metrics and tool_name:
+            #     self.metrics.cache_hit.labels(
+            #         tool = tool_name
+            #     ).inc()
             return value
 
         # L2 cache
@@ -149,17 +148,17 @@ class CacheManager:
 
         if raw is None:
 
-            if self.metrics and tool_name:
-                self.metrics.cache_miss.labels(
-                    tool = tool_name
-                ).inc()
+            # if self.metrics and tool_name:
+            #     self.metrics.cache_miss.labels(
+            #         tool = tool_name
+            #     ).inc()
 
             return None
 
-        if self.metrics and tool_name:
-            self.metrics.cache_hit.labels(
-                tool = tool_name
-            ).inc()
+        # if self.metrics and tool_name:
+        #     self.metrics.cache_hit.labels(
+        #         tool = tool_name
+        #     ).inc()
 
         value = json.loads(
             raw
@@ -178,7 +177,11 @@ class CacheManager:
                   value,
                   ttl = None):
 
-        ttl_l2 = self.l2_ttl_seconds or ttl
+        ttl_l2 = (
+            ttl 
+            if ttl is not None 
+            else self.l2_ttl_seconds
+        )
 
         ttl_l1 = min(
             ttl_l2,
@@ -215,6 +218,12 @@ class CacheManager:
         hit = await self.get(key=key)
 
         if hit is not None:
+
+            if self.metrics and tool_name:
+                self.metrics.cache_hit.labels(
+                    tool = tool_name
+                ).inc()
+
             return hit
 
         if self.metrics and tool_name:
@@ -241,11 +250,12 @@ class CacheManager:
             try:
                 value = await compute()
 
-                await self.set(
-                    key=key,
-                    value=value,
-                    ttl=ttl
-                )
+                if value[1] is None:   # If error is None then set Cache
+                    await self.set(
+                        key=key,
+                        value=value,
+                        ttl=ttl
+                    )
 
                 return value
             
@@ -263,15 +273,23 @@ class CacheManager:
             hit = await self.get(key)
 
             if hit is not None:
+
+                if self.metrics and tool_name:
+                    self.metrics.cache_hit.labels(
+                        tool = tool_name
+                    ).inc()
+
                 return hit
 
         value = await compute()
 
-        await self.set(
-            key=key,
-            value=value,
-            ttl=ttl
-        )
+        if value[1] is None:
+
+            await self.set(
+                key=key,
+                value=value,
+                ttl=ttl
+            )
 
         return value
 

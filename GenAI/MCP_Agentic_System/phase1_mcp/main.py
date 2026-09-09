@@ -14,6 +14,8 @@ from observability.tracing import init_tracing
 from observability.metrics import MetricsRegistry
 from prometheus_client import start_http_server
 
+from cache.manager import CacheManager
+
 async def main():
 
     init_tracing(
@@ -41,6 +43,12 @@ async def main():
 
         metrics_registry = MetricsRegistry()
 
+        cache_manager = CacheManager(
+            redis_url="redis://localhost:6379"
+        )
+
+        await cache_manager.connect()
+
         start_http_server(
             8000,
             registry=metrics_registry.registry
@@ -49,7 +57,8 @@ async def main():
 
         tool_executor = ToolExecutor(
             mcp_client=mcp_client,
-            metrics=metrics_registry
+            metrics=metrics_registry,
+            cache_manager=cache_manager
             )
 
         agent = Agent(llm, model, tool_executor, tool_registry)
