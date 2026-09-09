@@ -8,7 +8,10 @@ from observability.tracing import (
     record_span_error,
     current_trace_id
 )
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import (
+    Status, 
+    StatusCode
+)
 import time
 from observability.metrics import MetricsRegistry
 from cache.manager import (
@@ -158,7 +161,7 @@ class ToolExecutor:
 
                 raise
             
-            except TimeoutError:
+            except TimeoutError as exc:
                 error = StructuredError(
                     code = ErrorCode.TOOL_TIMEOUT,
                     message=(
@@ -283,7 +286,11 @@ class ToolExecutor:
         return await operation()
 
 
-    async def execute(self, tool_name, arguments):
+    async def execute(
+            self, 
+            tool_name, 
+            arguments
+            ):
 
         start = time.perf_counter()
         status = "error"
