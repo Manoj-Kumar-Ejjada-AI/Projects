@@ -313,64 +313,6 @@ class ToolExecutor:
                 )
 
 
-            if self.rate_limiter is not None:
-
-                with self.tracer.start_as_current_span(
-                    "rate_limit"
-                ) as rate_span:
-                    
-                    rate_span.set_attribute(
-                        "tool.name",
-                        tool_name
-                    )
-
-                    allowed, retry_after = await self.rate_limiter.acquire(
-                        key=tool_name
-                    )
-
-                    rate_span.set_attribute(
-                        "ratelimit.allowed",
-                        allowed
-                    )
-
-                    if retry_after is not None:
-
-                        rate_span.set_attribute(
-                            "ratelimit.retry_after",
-                            retry_after
-                        )
-
-                
-
-                    if not allowed:
-
-                        error = StructuredError(
-                            code = ErrorCode.RATE_LIMITED,
-                            message= f"Tool '{tool_name}' is rate limited",
-                            retryable=True,
-                            counts_toward_circuit_breaker=False,
-                            details={
-                                "retry_after": retry_after
-                            }
-                        )
-
-                        execute_span.set_attribute(
-                            "tool.error_code",
-                            error.code
-                        )
-
-                        execute_span.set_status(
-                            Status(
-                                StatusCode.ERROR,
-                                error.message
-                            )
-                        )
-
-
-                        return None, error
-
-
-
             loop = asyncio.get_running_loop()
 
             deadline = loop.time() + self.overall_timeout_seconds
@@ -383,10 +325,54 @@ class ToolExecutor:
                     tool_name,
                     arguments
                 )
-
+                # print("CACHE DEBUG: tool_name =", tool_name)
+                # print("CACHE DEBUG: arguments =", arguments)
+                # print("CACHE DEBUG: cache_key =", cache_key)
             
 
             async def compute():
+
+                if self.rate_limiter is not None:
+                                
+                    with self.tracer.start_as_current_span(
+                        "rate_limit"
+                    ) as rate_span:
+                        
+                        rate_span.set_attribute(
+                            "tool.name",
+                            tool_name
+                        )
+    
+                        allowed, retry_after = await self.rate_limiter.acquire(
+                            key=tool_name
+                        )
+    
+                        rate_span.set_attribute(
+                            "ratelimit.allowed",
+                            allowed
+                        )
+    
+                        if retry_after is not None:
+    
+                            rate_span.set_attribute(
+                                "ratelimit.retry_after",
+                                retry_after
+                            )
+    
+                    
+    
+                        if not allowed:
+    
+                            error = StructuredError(
+                                code = ErrorCode.RATE_LIMITED,
+                                message= f"Tool '{tool_name}' is rate limited",
+                                retryable=True,
+                                counts_toward_circuit_breaker=False,
+                                details={
+                                    "retry_after": retry_after
+                                }
+                            )
+                            return None, error
 
                 return await self._execute_with_policies(
                     tool_name,
@@ -405,7 +391,8 @@ class ToolExecutor:
                             compute=compute,
                             tool_name= tool_name
                         )
-                    result, error = await compute()
+                    else:
+                        result, error = await compute()
 
                 
                 status = "success" if error is None else "error"
