@@ -132,13 +132,13 @@ class CacheManager:
         value = await self.l1.get(key)
 
         if value is not None:
-
+            # print("Cache Debug: L1 Hit")
             # if self.metrics and tool_name:
             #     self.metrics.cache_hit.labels(
             #         tool = tool_name
             #     ).inc()
             return value
-
+        # print("CACHE DEBUG: L1 MISS")
         # L2 cache
 
         if self.redis is None:
@@ -147,6 +147,7 @@ class CacheManager:
         raw = await self.redis.get(key)
 
         if raw is None:
+            # print("CACHE DEBUG: L2 MISS")
 
             # if self.metrics and tool_name:
             #     self.metrics.cache_miss.labels(
@@ -159,7 +160,7 @@ class CacheManager:
         #     self.metrics.cache_hit.labels(
         #         tool = tool_name
         #     ).inc()
-
+        # print("CACHE DEBUG: L2 HIT")
         value = json.loads(
             raw
         )
