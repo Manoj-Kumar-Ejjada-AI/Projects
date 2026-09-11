@@ -325,9 +325,6 @@ class ToolExecutor:
                     tool_name,
                     arguments
                 )
-                # print("CACHE DEBUG: tool_name =", tool_name)
-                # print("CACHE DEBUG: arguments =", arguments)
-                # print("CACHE DEBUG: cache_key =", cache_key)
             
 
             async def compute():

@@ -44,7 +44,8 @@ async def main():
         metrics_registry = MetricsRegistry()
 
         cache_manager = CacheManager(
-            redis_url="redis://localhost:6379"
+            redis_url="redis://localhost:6379",
+            metrics=metrics_registry
         )
 
         await cache_manager.connect()
@@ -63,11 +64,16 @@ async def main():
 
         agent = Agent(llm, model, tool_executor, tool_registry)
 
-        user_message = input("Enter your query: ")
+        while True:
 
-        response = await agent.run(user_message)
+            user_message = input("Enter your query: ")
 
-        print(response)
+            if user_message.lower() == "exit":
+                break
+
+            response = await agent.run(user_message)
+
+            print(response)
 
 if __name__=="__main__":
     asyncio.run(main())
