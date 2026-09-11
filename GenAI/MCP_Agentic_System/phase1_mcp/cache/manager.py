@@ -92,8 +92,8 @@ class CacheManager:
             self,
             redis_url: str,
             l1_max_items: int = 1000,
-            l1_ttl_seconds: int = 10,
-            l2_ttl_seconds: int = 30,
+            l1_ttl_seconds: int = 100,
+            l2_ttl_seconds: int = 300,
             metrics: MetricsRegistry | None = None):
 
         self.l1 = L1Cache(

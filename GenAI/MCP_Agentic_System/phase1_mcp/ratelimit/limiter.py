@@ -19,8 +19,8 @@ local bucket = redis.call(
                 'tokens',
                 'last_ms')
 
-local tokens = bucket[1] or capacity
-local last_ms = bucket[2] or now_ms
+local tokens = tonumber(bucket[1]) or capacity
+local last_ms = tonumber(bucket[2]) or now_ms
 
 local elapsed = math.max(
                     0,
@@ -38,15 +38,14 @@ if tokens >= cost then
     allowed = 1
 
 else
-
-local deficit = cost - tokens
-local retry_after_ms = math.ceil(
+    deficit = cost - tokens
+    retry_after_ms = math.ceil(
                         (deficit / refill_per_sec)*1000
                         )
 end
 
 redis.call(
-    'HMSET',
+    'HSET',
     key,
     'tokens',
     tokens,
@@ -133,13 +132,13 @@ class RateLimiter:
         )
 
         key = (
-            f"atlas:rl"
-            f"{tenant}"
+            f"atlas:rl:"
+            f"{tenant}:"
             f"{tool}"
         )
 
-        now_ms = (
-            time.monotonic()
+        now_ms = int(
+            time.monotonic()*1000
         )
 
         allowed, retry_after_ms, _ = (
