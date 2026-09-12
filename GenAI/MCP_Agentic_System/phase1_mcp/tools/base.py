@@ -72,6 +72,27 @@ class ToolExecutor:
             tool = tool_name
         ).observe(duration)
 
+    def _update_circuit_metric(self, tool_name):
+
+        if (
+            self.metrics is None
+            or self.circuit_breaker is None
+        ):
+            return
+
+        state_name = self.circuit_breaker.state.value
+
+        state_mapping = {
+            "closed": 0,
+            "half_open": 1,
+            "open": 2,
+        }
+
+        self.metrics.circuit_state.labels(
+            tool=tool_name
+        ).set(
+            state_mapping[state_name]
+        )
 
     async def _execute_once(self, 
                             tool_name, 
@@ -339,38 +360,35 @@ class ToolExecutor:
                             "tool.name",
                             tool_name
                         )
-    
-                        allowed, retry_after = await self.rate_limiter.acquire(
-                            key=tool_name
+                        rate_error = await self.rate_limiter.acquire(
+                            tenant="default",
+                            tool=tool_name,
+                            cost=1
                         )
-    
+                        if rate_error is not None:
+                            rate_span.set_attribute(
+                                "ratelimit.allowed",
+                                False
+                            )
+                            if rate_error.details.get("retry_after") is not None:
+                                rate_span.set_attribute(
+                                    "ratelimit.retry_after",
+                                    rate_error.details.get("retry_after")
+                                )
+                            if self.metrics is not None:
+                            
+                                self.metrics.rate_limited.labels(
+                                tool=tool_name
+                                ).inc()
+                            return None, rate_error
+                        
+                        
                         rate_span.set_attribute(
                             "ratelimit.allowed",
-                            allowed
+                            True
                         )
-    
-                        if retry_after is not None:
-    
-                            rate_span.set_attribute(
-                                "ratelimit.retry_after",
-                                retry_after
-                            )
-    
-                    
-    
-                        if not allowed:
-    
-                            error = StructuredError(
-                                code = ErrorCode.RATE_LIMITED,
-                                message= f"Tool '{tool_name}' is rate limited",
-                                retryable=True,
-                                counts_toward_circuit_breaker=False,
-                                details={
-                                    "retry_after": retry_after
-                                }
-                            )
-                            return None, error
 
+                
                 return await self._execute_with_policies(
                     tool_name,
                     arguments,
@@ -391,6 +409,7 @@ class ToolExecutor:
                     else:
                         result, error = await compute()
 
+                self._update_circuit_metric(tool_name)
                 
                 status = "success" if error is None else "error"
 

@@ -15,6 +15,8 @@ from observability.metrics import MetricsRegistry
 from prometheus_client import start_http_server
 
 from cache.manager import CacheManager
+from reliability.circuitBreaker import CircuitBreaker
+from ratelimit.limiter import RateLimiter
 
 async def main():
 
@@ -48,32 +50,56 @@ async def main():
             metrics=metrics_registry
         )
 
-        await cache_manager.connect()
+        rate_limiter = RateLimiter(
+                redis_url="redis://localhost:6379/0",
+                )
 
-        start_http_server(
-            8000,
-            registry=metrics_registry.registry
-        )
+        try:
 
+            await cache_manager.connect()
 
-        tool_executor = ToolExecutor(
-            mcp_client=mcp_client,
-            metrics=metrics_registry,
-            cache_manager=cache_manager
+            await rate_limiter.connect()
+
+            start_http_server(
+                8000,
+                registry=metrics_registry.registry
             )
 
-        agent = Agent(llm, model, tool_executor, tool_registry)
+            
 
-        while True:
+            await rate_limiter.connect()
 
-            user_message = input("Enter your query: ")
+            circuit_breaker = CircuitBreaker(
+                failure_threshold=3,
+                recovery_timeout=30,
+            )
 
-            if user_message.lower() == "exit":
-                break
 
-            response = await agent.run(user_message)
+            tool_executor = ToolExecutor(
+                mcp_client=mcp_client,
+                metrics=metrics_registry,
+                cache_manager=cache_manager,
+                circuit_breaker=circuit_breaker,
+                rate_limiter=rate_limiter
+                )
 
-            print(response)
+            agent = Agent(llm, model, tool_executor, tool_registry)
+
+            while True:
+
+                user_message = input("Enter your query: ")
+
+                if user_message.lower() == "exit":
+                    break
+
+                response = await agent.run(user_message)
+
+                print(response)
+
+        finally:
+            await cache_manager.disconnect()
+            await rate_limiter.disconnect() 
+
 
 if __name__=="__main__":
     asyncio.run(main())

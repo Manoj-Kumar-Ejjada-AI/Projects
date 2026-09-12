@@ -93,7 +93,7 @@ class CircuitBreaker:
 
             if self.state == CircuitState.HALF_OPEN:
                 self.state = CircuitState.OPEN
-                self.opened_at = time.monotonic
+                self.opened_at = time.monotonic()
 
             if self.failure_count >= self.failure_threshold:
                 self.state = CircuitState.OPEN
@@ -130,13 +130,13 @@ class CircuitBreaker:
             return result, None
         if error.counts_toward_circuit_breaker:
             
-            await self.record_failure
+            await self.record_failure()
             return None, error
         else:
 
-            await self.record_success
+            await self.record_success()
 
-        return None, error
+            return None, error
         
             
 

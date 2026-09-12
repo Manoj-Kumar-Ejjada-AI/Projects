@@ -38,7 +38,7 @@ if tokens >= cost then
     allowed = 1
 
 else
-    deficit = cost - tokens
+    local deficit = cost - tokens
     retry_after_ms = math.ceil(
                         (deficit / refill_per_sec)*1000
                         )
@@ -76,8 +76,8 @@ class Quota:
 class RateLimiter:
     def __init__(self,
                  redis_url,
-                 default_capacity:int = 60,
-                 default_rpm: int = 60):
+                 default_capacity:int = 2,
+                 default_rpm: int = 2):
         
         self.redis_url = redis_url
 
