@@ -18,8 +18,9 @@ Operation = Callable[
 
 class CircuitBreaker:
     def __init__(self,
-                 failure_threshold: int = 5,
-                 recovery_timeout: float = 30.0):
+                 failure_threshold: int = 2,#5,
+                 recovery_timeout: float = 10.0#30.0
+                 ):
 
         if failure_threshold < 1:
             raise ValueError(
