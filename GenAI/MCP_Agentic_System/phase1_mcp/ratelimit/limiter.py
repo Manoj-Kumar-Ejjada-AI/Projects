@@ -76,8 +76,8 @@ class Quota:
 class RateLimiter:
     def __init__(self,
                  redis_url,
-                 default_capacity:int = 2,
-                 default_rpm: int = 2):
+                 default_capacity:int = 10,
+                 default_rpm: int = 60):
         
         self.redis_url = redis_url
 

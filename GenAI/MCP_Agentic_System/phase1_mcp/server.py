@@ -75,6 +75,21 @@ def get_order(order_id: int) -> dict:
             "customer_id": 2,
             "product": "Tab",
             "status": "Processing"
+        },
+        104: {
+            "customer_id": 3,
+            "product": "Tab",
+            "status": "rate_test"
+        },
+        105: {
+            "customer_id": 3,
+            "product": "Tab",
+            "status": "circuit_test"
+        },
+        106: {
+            "customer_id": 3,
+            "product": "Tab",
+            "status": "Processing"
         }
     }
 
@@ -86,6 +101,7 @@ def get_order(order_id: int) -> dict:
         }
     
     return order
+    # raise ConnectionError("Simulated downstream database failure")
 
 if __name__ == "__main__":
     mcp.run()
