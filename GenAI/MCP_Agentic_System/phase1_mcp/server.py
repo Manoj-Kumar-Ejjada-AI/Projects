@@ -93,15 +93,15 @@ def get_order(order_id: int) -> dict:
         }
     }
 
-    order = orders.get(order_id)
+    # order = orders.get(order_id)
 
-    if order is None:
-        return {
-            "error": "Order not found"
-        }
+    # if order is None:
+    #     return {
+    #         "error": "Order not found"
+    #     }
     
-    return order
-    # raise ConnectionError("Simulated downstream database failure")
+    # return order
+    raise ConnectionError("Simulated downstream database failure")
 
 if __name__ == "__main__":
     mcp.run()
