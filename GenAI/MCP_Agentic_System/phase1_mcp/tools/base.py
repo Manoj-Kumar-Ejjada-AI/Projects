@@ -239,7 +239,7 @@ class ToolExecutor:
                     code = ErrorCode.TOOL_EXECUTION_ERROR,
                     message= f"Tool '{tool_name}' failed.",
                     retryable= False,
-                    counts_toward_circuit_breaker=False,
+                    counts_toward_circuit_breaker=True,
                     details= {
                         "exception": str(exc)
                     }
