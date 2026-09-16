@@ -66,12 +66,9 @@ async def main():
             )
 
             
-
-            await rate_limiter.connect()
-
             circuit_breaker = CircuitBreaker(
-                failure_threshold=3,
-                recovery_timeout=30,
+                failure_threshold=2,
+                recovery_timeout=10,
             )
 
 
