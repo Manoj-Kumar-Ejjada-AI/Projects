@@ -18,6 +18,8 @@ from cache.manager import (
     CacheManager,
     build_cache_key
 )
+from reliability.latency_tracker import LatencyTracker
+from reliability.timeout_policy import TimeoutPolicy
 
 
 class ToolExecutor:
@@ -26,11 +28,13 @@ class ToolExecutor:
                 mcp_client,
                 timeout_seconds=10,
                 overall_timeout_seconds = 30,
-                retry_policy: RetryPolicy|None = None,
-                circuit_breaker: CircuitBreaker|None = None,
+                retry_policy: RetryPolicy | None = None,
+                circuit_breaker: CircuitBreaker | None = None,
                 rate_limiter: RateLimiter | None = None,
                 metrics: MetricsRegistry | None = None,
                 cache_manager: CacheManager | None = None,
+                timeout_policy: TimeoutPolicy | None = None,
+                latency_tracker: LatencyTracker | None = None
                 ):
         
         self.mcp_client = mcp_client
@@ -44,6 +48,8 @@ class ToolExecutor:
         self.metrics = metrics
 
         self.cache_manager = cache_manager
+
+
 
     def _remaining_time(self, deadline):
 
