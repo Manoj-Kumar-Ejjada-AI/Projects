@@ -49,6 +49,9 @@ class ToolExecutor:
 
         self.cache_manager = cache_manager
 
+        self.timeout_policy = timeout_policy
+        self.latency_tracker = latency_tracker
+
 
 
     def _remaining_time(self, deadline):
@@ -146,8 +149,17 @@ class ToolExecutor:
 
                 return None, error
 
+            if self.timeout_policy is not None:
+                configured_timeout = self.timeout_policy.get_timeout(
+                    tool_name,
+                    remaining
+                )
+            else:
+                configured_timeout = self.timeout_seconds
+
+
             attempt_timeout = min(
-                self.timeout_seconds,
+                configured_timeout,
                 remaining
             )
 
@@ -167,11 +179,18 @@ class ToolExecutor:
                         tool_name
                     )
 
+                    attempt_start = time.perf_counter()
+                    
                     async with asyncio.timeout(attempt_timeout):
                         result = await self.mcp_client.call_tool(
                             tool_name, 
                             arguments
                             )
+
+                    duration = time.perf_counter() - attempt_start
+
+                    if self.latency_tracker is not None:
+                        self.latency_tracker.record(tool_name, duration)
 
                     mcp_span.set_status(
                         StatusCode.OK
