@@ -1,3 +1,5 @@
+from reliability.latency_tracker import LatencyTracker
+
 class TimeoutPolicy:
     def __init__(
         self,
@@ -6,7 +8,8 @@ class TimeoutPolicy:
         max_timeout_seconds: float = 10.0,
         percentile: float = 95.0,
         safety_factor: float = 3.0,
-        latency_tracker=None,
+        latency_tracker: LatencyTracker = None,
+        min_samples: int = 5
     ):
         if default_timeout_seconds <= 0:
             raise ValueError(
@@ -28,12 +31,18 @@ class TimeoutPolicy:
                 "safety_factor must be > 0"
             )
 
+        if min_samples < 1:
+            raise ValueError(
+                "mi_samples must be >= 1"
+            )
+
         self.default_timeout_seconds = default_timeout_seconds
         self.min_timeout_seconds = min_timeout_seconds
         self.max_timeout_seconds = max_timeout_seconds
         self.percentile = percentile
         self.safety_factor = safety_factor
         self.latency_tracker = latency_tracker
+        self.min_samples = min_samples
 
     def get_timeout(
         self,
@@ -43,16 +52,23 @@ class TimeoutPolicy:
         if remaining_budget <= 0:
             return 0.0
 
-        timeout = self.default_timeout_seconds
+        samples = self.latency_tracker.get_samples(tool_name)
 
-        if self.latency_tracker is not None:
-            p95 = self.latency_tracker.get_percentile(
+        if len(samples) < self.min_samples:
+            timeout = self.default_timeout_seconds
+        else:
+            percentile_latency = self.latency_tracker.get_percentile(
                 tool_name,
-                self.percentile,
-            )
+                self.percentile
+                )
 
-            if p95 is not None:
-                timeout = p95 * self.safety_factor
+            if percentile_latency is None:
+                timeout = self.default_timeout_seconds
+            else:
+                timeout = (
+                    percentile_latency * self.safety_factor
+                )
+
 
         timeout = max(
             self.min_timeout_seconds,
