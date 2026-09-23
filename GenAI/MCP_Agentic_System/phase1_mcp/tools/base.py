@@ -103,6 +103,29 @@ class ToolExecutor:
             state_mapping[state_name]
         )
 
+    def _record_latency(self, tool_name, duration):
+        if self.latency_tracker is None:
+            return
+
+        self.latency_tracker.record(
+            tool_name = tool_name,
+            duration_seconds = duration
+        )
+
+        # To validate
+        # print(
+        #     "get_order samples:",
+        #     self.latency_tracker.get_samples("get_order")
+        # )
+
+        # print(
+        #     "get_order p95:",
+        #     self.latency_tracker.get_percentile(
+        #         "get_order",
+        #         95.0,
+        #     )
+        # )
+    
     async def _execute_once(self, 
                             tool_name, 
                             arguments,
@@ -163,10 +186,18 @@ class ToolExecutor:
                 remaining
             )
 
+            # To validate
+            # print(
+            # f"[ATBA] {tool_name} "
+            # f"timeout={attempt_timeout:.4f}s"
+            # )
+
             span.set_attribute(
                 "tool.timeout_seconds",
                 attempt_timeout
             )
+
+            attempt_start = time.perf_counter()
 
             try:
 
@@ -179,7 +210,6 @@ class ToolExecutor:
                         tool_name
                     )
 
-                    attempt_start = time.perf_counter()
                     
                     async with asyncio.timeout(attempt_timeout):
                         result = await self.mcp_client.call_tool(
@@ -189,8 +219,11 @@ class ToolExecutor:
 
                     duration = time.perf_counter() - attempt_start
 
-                    if self.latency_tracker is not None:
-                        self.latency_tracker.record(tool_name, duration)
+                    self._record_latency(
+                        tool_name,
+                        duration
+                    )
+
 
                     mcp_span.set_status(
                         StatusCode.OK
@@ -208,6 +241,14 @@ class ToolExecutor:
                 raise
             
             except TimeoutError as exc:
+
+                duration = time.perf_counter() - attempt_start
+
+                self._record_latency(
+                    tool_name,
+                    duration
+                )
+
                 error = StructuredError(
                     code = ErrorCode.TOOL_TIMEOUT,
                     message=(
@@ -235,6 +276,13 @@ class ToolExecutor:
 
             except (ConnectionError, OSError,) as exc:
 
+                duration = time.perf_counter() - attempt_start
+
+                self._record_latency(
+                    tool_name,
+                    duration
+                )
+
                 error = StructuredError(
                     code= ErrorCode.TOOL_EXECUTION_ERROR,
                     message=(
@@ -260,6 +308,14 @@ class ToolExecutor:
                 return None, error
                 
             except Exception as exc:
+
+                duration = time.perf_counter() - attempt_start
+
+                self._record_latency(
+                    tool_name,
+                    duration
+                )
+
                 error = StructuredError(
                     code = ErrorCode.TOOL_EXECUTION_ERROR,
                     message= f"Tool '{tool_name}' failed.",

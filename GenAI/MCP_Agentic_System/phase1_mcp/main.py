@@ -18,6 +18,9 @@ from cache.manager import CacheManager
 from reliability.circuitBreaker import CircuitBreaker
 from ratelimit.limiter import RateLimiter
 
+from reliability.latency_tracker import LatencyTracker
+from reliability.timeout_policy import TimeoutPolicy
+
 async def main():
 
     init_tracing(
@@ -71,13 +74,29 @@ async def main():
                 recovery_timeout=10,
             )
 
+            latency_tracker = LatencyTracker(
+                max_samples_per_tool=100
+                    )
+
+            timeout_policy = TimeoutPolicy(
+                latency_tracker=latency_tracker,
+                default_timeout_seconds=10.0,
+                min_timeout_seconds=0.1,
+                max_timeout_seconds=10.0,
+                percentile=95.0,
+                safety_factor=3.0,
+                min_samples=5,
+                )
+
 
             tool_executor = ToolExecutor(
                 mcp_client=mcp_client,
                 metrics=metrics_registry,
                 cache_manager=cache_manager,
                 circuit_breaker=circuit_breaker,
-                rate_limiter=rate_limiter
+                rate_limiter=rate_limiter,
+                latency_tracker=latency_tracker,
+                timeout_policy=timeout_policy
                 )
 
             agent = Agent(llm, model, tool_executor, tool_registry)
