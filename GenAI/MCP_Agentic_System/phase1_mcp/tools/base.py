@@ -114,14 +114,15 @@ class ToolExecutor:
 
         # To validate
         # print(
+        #     "---------------------------------------------------------------------"
         #     "get_order samples:",
-        #     self.latency_tracker.get_samples("get_order")
+        #     self.latency_tracker.get_samples("slow_tool")
         # )
 
         # print(
         #     "get_order p95:",
         #     self.latency_tracker.get_percentile(
-        #         "get_order",
+        #         "slow_tool",
         #         95.0,
         #     )
         # )
@@ -188,6 +189,7 @@ class ToolExecutor:
 
             # To validate
             # print(
+            # "---------------------------------------------------------------------------------"
             # f"[ATBA] {tool_name} "
             # f"timeout={attempt_timeout:.4f}s"
             # )

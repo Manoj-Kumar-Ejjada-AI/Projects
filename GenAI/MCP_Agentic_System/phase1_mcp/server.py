@@ -1,5 +1,6 @@
 from mcp.server.mcpserver import MCPServer
 # from fastmcp import FastMCP
+import asyncio
 
 mcp = MCPServer("Customer Server")
 
@@ -102,6 +103,12 @@ def get_order(order_id: int) -> dict:
     
     return order
     # raise ConnectionError("Simulated downstream database failure")
+
+@mcp.tool()
+async def slow_tool(delay: float = 0.0):
+    "Execute slow tool and get response"
+    await asyncio.sleep(delay)
+    return {"status": "completed"}
 
 if __name__ == "__main__":
     mcp.run()
