@@ -21,6 +21,12 @@ from cache.manager import (
 from reliability.latency_tracker import LatencyTracker
 from reliability.timeout_policy import TimeoutPolicy
 
+from enum import Enum
+from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar
+from pydantic import BaseModel
+
 
 class ToolExecutor:
     def __init__(
@@ -570,3 +576,43 @@ class ToolExecutor:
 
 
 
+class ToolLevel(str, Enum):
+    """Execution granularity of an agent-facing tool."""
+
+    ATOMIC = "atomic"
+    COMPOSED = "composed"
+    WORKFLOW = "workflow"
+
+
+@dataclass(frozen=True)
+class ToolMetadata:
+    """Metadata exposed by the hierarchy/registry layer."""
+
+    name: str
+    description: str
+    level: ToolLevel
+    cacheable: bool = True
+    cache_ttl_seconds: int = 60
+    timeout_ms: int = 10_000
+    tags: tuple[str, ...] = ()
+
+
+class Tool(ABC):
+    """Base abstraction shared by Atomic, Composed, and Workflow tools."""
+
+    meta: ClassVar[ToolMetadata]
+    input_model: ClassVar[type[BaseModel]]
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return self.input_model.model_json_schema()
+
+    @abstractmethod
+    async def run(
+            self,
+            executor: ToolExecutor,
+            arguments: dict[str, Any],
+            deadline: float,
+            ):
+        """Run this tool within the caller's existing execution budget."""
+        raise NotImplementedError
