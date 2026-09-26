@@ -40,7 +40,8 @@ class ToolExecutor:
                 metrics: MetricsRegistry | None = None,
                 cache_manager: CacheManager | None = None,
                 timeout_policy: TimeoutPolicy | None = None,
-                latency_tracker: LatencyTracker | None = None
+                latency_tracker: LatencyTracker | None = None,
+                local_tools: dict[str, "Tool"] | None = None
                 ):
         
         self.mcp_client = mcp_client
@@ -57,6 +58,7 @@ class ToolExecutor:
 
         self.timeout_policy = timeout_policy
         self.latency_tracker = latency_tracker
+        self.local_tools: dict[str, "Tool"] = local_tools or {}
 
 
 
@@ -208,9 +210,11 @@ class ToolExecutor:
             attempt_start = time.perf_counter()
 
             try:
-
+			
+                local_tool = self.local_tools.get(tool_name)
+                span_name = "tool.local_call" if local_tool is not None else "mcp.call"
                 with self.tracer.start_as_current_span(
-                    "mcp.call"
+                    span_name
                 ) as mcp_span:
                     
                     mcp_span.set_attribute(
@@ -220,9 +224,19 @@ class ToolExecutor:
 
                     
                     async with asyncio.timeout(attempt_timeout):
-                        result = await self.mcp_client.call_tool(
-                            tool_name, 
-                            arguments
+                        if local_tool is not None:
+                            local_result, local_error = await local_tool.run(
+                                executor=self,
+                                arguments=arguments,
+                                deadline=deadline,
+                            )
+                            if local_error is not None:
+                                return None, local_error
+                            result = local_result
+                        else:
+                            result = await self.mcp_client.call_tool(
+                                tool_name,
+                                arguments,
                             )
 
                     duration = time.perf_counter() - attempt_start
@@ -397,9 +411,23 @@ class ToolExecutor:
 
 
     async def execute(
-            self, 
-            tool_name, 
+            self,
+            tool_name,
             arguments
+            ):
+            
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.overall_timeout_seconds
+        return await self._execute_with_deadline(
+            tool_name,
+            arguments,
+            deadline,
+        )
+    async def _execute_with_deadline(
+            self,
+            tool_name,
+            arguments,
+            deadline,
             ):
 
         start = time.perf_counter()
@@ -423,10 +451,7 @@ class ToolExecutor:
                 )
 
 
-            loop = asyncio.get_running_loop()
-
-            deadline = loop.time() + self.overall_timeout_seconds
-
+            
             cache_key = None
 
             if self.cache_manager is not None:
@@ -467,7 +492,7 @@ class ToolExecutor:
                             if self.metrics is not None:
                             
                                 self.metrics.rate_limited.labels(
-                                tool=tool_name
+									tool=tool_name
                                 ).inc()
                             return None, rate_error
                         
@@ -486,9 +511,23 @@ class ToolExecutor:
 
 
             try:
-                async with asyncio.timeout(
-                    self.overall_timeout_seconds
-                ):
+                remaining = self._remaining_time(deadline)
+                if remaining <= 0:
+                    error = StructuredError(
+                        code=ErrorCode.EXECUTION_DEADLINE_EXCEEDED,
+                        message=(
+                            f"Overall execution budget for tool "
+                            f"'{tool_name}' has expired."
+                        ),
+                        retryable=False,
+                        counts_toward_circuit_breaker=False,
+                    )
+                    execute_span.set_attribute("tool.error_code", error.code)
+                    execute_span.set_status(
+                        Status(StatusCode.ERROR, error.message)
+                    )
+                    return None, error
+                async with asyncio.timeout(remaining):
                     if self.cache_manager is not None:
                         result, error = await self.cache_manager.get_or_compute(
                             key = cache_key,
