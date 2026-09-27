@@ -18,6 +18,14 @@ from cache.manager import (
     CacheManager,
     build_cache_key
 )
+from reliability.latency_tracker import LatencyTracker
+from reliability.timeout_policy import TimeoutPolicy
+
+from enum import Enum
+from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar
+from pydantic import BaseModel
 
 
 class ToolExecutor:
@@ -26,11 +34,14 @@ class ToolExecutor:
                 mcp_client,
                 timeout_seconds=10,
                 overall_timeout_seconds = 30,
-                retry_policy: RetryPolicy|None = None,
-                circuit_breaker: CircuitBreaker|None = None,
+                retry_policy: RetryPolicy | None = None,
+                circuit_breaker: CircuitBreaker | None = None,
                 rate_limiter: RateLimiter | None = None,
                 metrics: MetricsRegistry | None = None,
                 cache_manager: CacheManager | None = None,
+                timeout_policy: TimeoutPolicy | None = None,
+                latency_tracker: LatencyTracker | None = None,
+                local_tools: dict[str, "Tool"] | None = None
                 ):
         
         self.mcp_client = mcp_client
@@ -44,6 +55,12 @@ class ToolExecutor:
         self.metrics = metrics
 
         self.cache_manager = cache_manager
+
+        self.timeout_policy = timeout_policy
+        self.latency_tracker = latency_tracker
+        self.local_tools: dict[str, "Tool"] = local_tools or {}
+
+
 
     def _remaining_time(self, deadline):
 
@@ -94,6 +111,30 @@ class ToolExecutor:
             state_mapping[state_name]
         )
 
+    def _record_latency(self, tool_name, duration):
+        if self.latency_tracker is None:
+            return
+
+        self.latency_tracker.record(
+            tool_name = tool_name,
+            duration_seconds = duration
+        )
+
+        # To validate
+        # print(
+        #     "---------------------------------------------------------------------"
+        #     "get_order samples:",
+        #     self.latency_tracker.get_samples("slow_tool")
+        # )
+
+        # print(
+        #     "get_order p95:",
+        #     self.latency_tracker.get_percentile(
+        #         "slow_tool",
+        #         95.0,
+        #     )
+        # )
+    
     async def _execute_once(self, 
                             tool_name, 
                             arguments,
@@ -140,20 +181,40 @@ class ToolExecutor:
 
                 return None, error
 
+            if self.timeout_policy is not None:
+                configured_timeout = self.timeout_policy.get_timeout(
+                    tool_name,
+                    remaining
+                )
+            else:
+                configured_timeout = self.timeout_seconds
+
+
             attempt_timeout = min(
-                self.timeout_seconds,
+                configured_timeout,
                 remaining
             )
+
+            # To validate
+            # print(
+            # "---------------------------------------------------------------------------------"
+            # f"[ATBA] {tool_name} "
+            # f"timeout={attempt_timeout:.4f}s"
+            # )
 
             span.set_attribute(
                 "tool.timeout_seconds",
                 attempt_timeout
             )
 
-            try:
+            attempt_start = time.perf_counter()
 
+            try:
+			
+                local_tool = self.local_tools.get(tool_name)
+                span_name = "tool.local_call" if local_tool is not None else "mcp.call"
                 with self.tracer.start_as_current_span(
-                    "mcp.call"
+                    span_name
                 ) as mcp_span:
                     
                     mcp_span.set_attribute(
@@ -161,11 +222,30 @@ class ToolExecutor:
                         tool_name
                     )
 
+                    
                     async with asyncio.timeout(attempt_timeout):
-                        result = await self.mcp_client.call_tool(
-                            tool_name, 
-                            arguments
+                        if local_tool is not None:
+                            local_result, local_error = await local_tool.run(
+                                executor=self,
+                                arguments=arguments,
+                                deadline=deadline,
                             )
+                            if local_error is not None:
+                                return None, local_error
+                            result = local_result
+                        else:
+                            result = await self.mcp_client.call_tool(
+                                tool_name,
+                                arguments,
+                            )
+
+                    duration = time.perf_counter() - attempt_start
+
+                    self._record_latency(
+                        tool_name,
+                        duration
+                    )
+
 
                     mcp_span.set_status(
                         StatusCode.OK
@@ -183,6 +263,14 @@ class ToolExecutor:
                 raise
             
             except TimeoutError as exc:
+
+                duration = time.perf_counter() - attempt_start
+
+                self._record_latency(
+                    tool_name,
+                    duration
+                )
+
                 error = StructuredError(
                     code = ErrorCode.TOOL_TIMEOUT,
                     message=(
@@ -210,6 +298,13 @@ class ToolExecutor:
 
             except (ConnectionError, OSError,) as exc:
 
+                duration = time.perf_counter() - attempt_start
+
+                self._record_latency(
+                    tool_name,
+                    duration
+                )
+
                 error = StructuredError(
                     code= ErrorCode.TOOL_EXECUTION_ERROR,
                     message=(
@@ -235,6 +330,14 @@ class ToolExecutor:
                 return None, error
                 
             except Exception as exc:
+
+                duration = time.perf_counter() - attempt_start
+
+                self._record_latency(
+                    tool_name,
+                    duration
+                )
+
                 error = StructuredError(
                     code = ErrorCode.TOOL_EXECUTION_ERROR,
                     message= f"Tool '{tool_name}' failed.",
@@ -308,9 +411,23 @@ class ToolExecutor:
 
 
     async def execute(
-            self, 
-            tool_name, 
+            self,
+            tool_name,
             arguments
+            ):
+            
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.overall_timeout_seconds
+        return await self._execute_with_deadline(
+            tool_name,
+            arguments,
+            deadline,
+        )
+    async def _execute_with_deadline(
+            self,
+            tool_name,
+            arguments,
+            deadline,
             ):
 
         start = time.perf_counter()
@@ -334,10 +451,7 @@ class ToolExecutor:
                 )
 
 
-            loop = asyncio.get_running_loop()
-
-            deadline = loop.time() + self.overall_timeout_seconds
-
+            
             cache_key = None
 
             if self.cache_manager is not None:
@@ -378,7 +492,7 @@ class ToolExecutor:
                             if self.metrics is not None:
                             
                                 self.metrics.rate_limited.labels(
-                                tool=tool_name
+									tool=tool_name
                                 ).inc()
                             return None, rate_error
                         
@@ -397,9 +511,23 @@ class ToolExecutor:
 
 
             try:
-                async with asyncio.timeout(
-                    self.overall_timeout_seconds
-                ):
+                remaining = self._remaining_time(deadline)
+                if remaining <= 0:
+                    error = StructuredError(
+                        code=ErrorCode.EXECUTION_DEADLINE_EXCEEDED,
+                        message=(
+                            f"Overall execution budget for tool "
+                            f"'{tool_name}' has expired."
+                        ),
+                        retryable=False,
+                        counts_toward_circuit_breaker=False,
+                    )
+                    execute_span.set_attribute("tool.error_code", error.code)
+                    execute_span.set_status(
+                        Status(StatusCode.ERROR, error.message)
+                    )
+                    return None, error
+                async with asyncio.timeout(remaining):
                     if self.cache_manager is not None:
                         result, error = await self.cache_manager.get_or_compute(
                             key = cache_key,
@@ -487,3 +615,43 @@ class ToolExecutor:
 
 
 
+class ToolLevel(str, Enum):
+    """Execution granularity of an agent-facing tool."""
+
+    ATOMIC = "atomic"
+    COMPOSED = "composed"
+    WORKFLOW = "workflow"
+
+
+@dataclass(frozen=True)
+class ToolMetadata:
+    """Metadata exposed by the hierarchy/registry layer."""
+
+    name: str
+    description: str
+    level: ToolLevel
+    cacheable: bool = True
+    cache_ttl_seconds: int = 60
+    timeout_ms: int = 10_000
+    tags: tuple[str, ...] = ()
+
+
+class Tool(ABC):
+    """Base abstraction shared by Atomic, Composed, and Workflow tools."""
+
+    meta: ClassVar[ToolMetadata]
+    input_model: ClassVar[type[BaseModel]]
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return self.input_model.model_json_schema()
+
+    @abstractmethod
+    async def run(
+            self,
+            executor: ToolExecutor,
+            arguments: dict[str, Any],
+            deadline: float,
+            ):
+        """Run this tool within the caller's existing execution budget."""
+        raise NotImplementedError
