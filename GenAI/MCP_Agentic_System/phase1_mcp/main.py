@@ -21,6 +21,10 @@ from ratelimit.limiter import RateLimiter
 from reliability.latency_tracker import LatencyTracker
 from reliability.timeout_policy import TimeoutPolicy
 
+from tools.atomic.base import AtomicMCPTool
+from tools.composed.order_customer import OrderCustomerContextTool
+from tools.workflow.order_support import OrderSupportWorkflowTool
+
 async def main():
 
     init_tracing(
@@ -98,6 +102,29 @@ async def main():
                 latency_tracker=latency_tracker,
                 timeout_policy=timeout_policy
                 )
+
+            mcp_tool_by_name = {tool.name: tool for tool in mcp_tools.tools}
+            atomic_tools = {
+                name: AtomicMCPTool(mcp_tool_by_name[name])
+                for name in ("get_order", "get_customer")
+            }
+
+            order_customer_context = OrderCustomerContextTool(
+                get_order=atomic_tools["get_order"],
+                get_customer=atomic_tools["get_customer"],
+            )
+            order_support_workflow = OrderSupportWorkflowTool(
+                order_customer=order_customer_context
+            )
+
+            local_tools = {
+                order_customer_context.meta.name: order_customer_context,
+                order_support_workflow.meta.name: order_support_workflow,
+            }
+            tool_executor.local_tools.update(local_tools)
+
+            for local_tool in local_tools.values():
+                tool_registry.register_local_tool(local_tool)
 
             agent = Agent(llm, model, tool_executor, tool_registry)
 
