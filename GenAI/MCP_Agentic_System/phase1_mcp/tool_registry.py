@@ -20,6 +20,18 @@ class ToolRegistry:
                     "parameters": tool.input_schema
                 }
             })
+
+        for tool in self.local_tools.values():
+            llm_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool.meta.name,
+                    "description": tool.meta.description,
+                    "parameters": tool.input_schema,
+                }
+            })
+        
+        
         return llm_tools
 
     def register_local_tool(self, tool) -> None:
@@ -34,7 +46,12 @@ class ToolRegistry:
         self.local_tools[tool.meta.name] = tool
 
     def has_tool(self, tool_name):
-        return tool_name in self.mcp_tools
+        return (
+            tool_name in self.mcp_tools
+            or tool_name in self.local_tools
+        )
 
     def get_tool(self, tool_name):
+        if tool_name in self.local_tools:
+            return self.local_tools[tool_name]
         return self.mcp_tools.get(tool_name)

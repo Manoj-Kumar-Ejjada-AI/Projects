@@ -5,3 +5,4 @@ fastmcp[apps]
 openai
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-grpc
+pytest
