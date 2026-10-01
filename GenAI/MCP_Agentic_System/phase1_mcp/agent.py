@@ -106,13 +106,17 @@ class Agent:
                 )
 
                 if tool_error:
-                    tool_result = json.dumps(tool_error.to_dict())
+                    tool_content = json.dumps(tool_error.to_dict())
+                elif isinstance(tool_result, str):
+                    tool_content = tool_result
+                else:
+                    tool_content = json.dumps(tool_result)
 
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": tool_result
+                        "content": tool_content
                     }
                 )
 
