@@ -68,7 +68,7 @@ class Agent:
 
                 except json.JSONDecodeError as exc:
                     error = StructuredError(
-                        code=ErrorCode.INVLAID_JSON,
+                        code=ErrorCode.INVALID_JSON,
                         message= "Tool arguments are not valid JSON",
                         retryable= False
                     )

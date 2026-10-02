@@ -1,19 +1,18 @@
 from typing import Any
 
-from tools.atomic.base import AtomicMCPTool
 from tools.base import Tool, ToolExecutor
 
 
 class ComposedTool(Tool):
 
-    async def call_atomic(
+    async def call_child(
         self,
         executor: ToolExecutor,
-        atomic_tool: AtomicMCPTool,
+        child_tool: Tool,
         arguments: dict[str, Any],
         deadline: float,
     ):
-        return await atomic_tool.run(
+        return await child_tool.run(
             executor=executor,
             arguments=arguments,
             deadline=deadline,

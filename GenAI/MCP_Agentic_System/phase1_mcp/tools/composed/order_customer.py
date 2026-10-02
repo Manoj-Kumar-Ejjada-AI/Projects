@@ -42,7 +42,7 @@ class OrderCustomerContextTool(ComposedTool):
         arguments: dict,
         deadline: float,
     ):
-        order_result, error = await self.call_atomic(
+        order_result, error = await self.call_child(
             executor,
             self.get_order,
             {"order_id": arguments["order_id"]},
@@ -64,7 +64,7 @@ class OrderCustomerContextTool(ComposedTool):
                 counts_toward_circuit_breaker=False,
             )
 
-        customer_result, error = await self.call_atomic(
+        customer_result, error = await self.call_child(
             executor,
             self.get_customer,
             {"customer_id": customer_id},
