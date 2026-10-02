@@ -23,7 +23,7 @@ class AtomicMCPTool(Tool):
         arguments: dict[str, Any],
         deadline: float,
     ):
-        return await executor._execute_with_deadline(
+        return await executor.execute_with_deadline(
             self.meta.name,
             arguments,
             deadline,

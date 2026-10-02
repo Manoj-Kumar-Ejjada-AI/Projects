@@ -7,7 +7,7 @@ class ToolRegistry:
             for tool in mcp_tools
         }
 
-        self.local_tools: dict[str: Any] = {}
+        self.local_tools: dict[str, Any] = {}
 
     def get_llm_tools(self):
         llm_tools = []

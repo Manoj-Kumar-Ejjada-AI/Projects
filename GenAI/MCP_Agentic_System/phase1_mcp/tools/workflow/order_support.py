@@ -46,7 +46,7 @@ class OrderSupportWorkflowTool(WorkflowTool):
                 counts_toward_circuit_breaker=False,
             )
 
-        context, error = await self.call_composed(
+        context, error = await self.call_step(
             executor,
             self.order_customer,
             {"order_id": order_id},

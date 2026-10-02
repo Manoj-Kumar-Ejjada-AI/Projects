@@ -58,7 +58,16 @@ class ToolExecutor:
 
         self.timeout_policy = timeout_policy
         self.latency_tracker = latency_tracker
-        self.local_tools: dict[str, "Tool"] = local_tools or {}
+        self.local_tools: dict[str, "Tool"] = dict(local_tools or {})
+
+
+    def register_local_tool(self, tool: "Tool") -> None:
+        name = tool.meta.name
+        if name in self.local_tools:
+            raise ValueError(
+                f"Local tool {name} already registered"
+            )
+        self.local_tools[name] = tool
 
 
 
@@ -418,11 +427,28 @@ class ToolExecutor:
             
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.overall_timeout_seconds
-        return await self._execute_with_deadline(
+        return await self.execute_with_deadline(
             tool_name,
             arguments,
             deadline,
         )
+
+    async def execute_with_deadline(
+            self,
+            tool_name,
+            arguments,
+            deadline
+    ):
+        if deadline < 0:
+            raise ValueError(
+                "deadline must be > 0"
+            )
+        return await self._execute_with_deadline(
+            tool_name,
+            arguments,
+            deadline
+        )
+        
     async def _execute_with_deadline(
             self,
             tool_name,
