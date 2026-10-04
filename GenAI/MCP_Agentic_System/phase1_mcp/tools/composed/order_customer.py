@@ -1,18 +1,19 @@
-from typing import ClassVar
+from __future__ import annotations
+
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from errors.framework import ErrorCode, StructuredError
 from tools.atomic.base import AtomicMCPTool
-from tools.base import ToolExecutor, ToolLevel, ToolMetadata
-from tools.composed.base import ComposedTool
+from tools.base import ToolLevel, ToolMetadata
+from tools.composed.base import SequentialComposedTool, ToolStep
 
 
 class OrderCustomerInput(BaseModel):
     order_id: int = Field(..., ge=1, description="Order identifier.")
 
 
-class OrderCustomerContextTool(ComposedTool):
+class OrderCustomerContextTool(SequentialComposedTool):
     """Deterministically execute Atomic get_order -> Atomic get_customer."""
 
     meta: ClassVar[ToolMetadata] = ToolMetadata(
@@ -33,47 +34,42 @@ class OrderCustomerContextTool(ComposedTool):
         get_order: AtomicMCPTool,
         get_customer: AtomicMCPTool,
     ) -> None:
-        self.get_order = get_order
-        self.get_customer = get_customer
+        super().__init__(
+            steps=(
+                ToolStep(
+                    name="get_order",
+                    tool=get_order,
+                    build_arguments=lambda arguments, _results: {
+                        "order_id": arguments["order_id"]
+                    },
+                ),
+                ToolStep(
+                    name="get_customer",
+                    tool=get_customer,
+                    build_arguments=self._build_customer_arguments,
+                ),
+            ),
+            result_builder=self._build_result,
+        )
 
-    async def run(
-        self,
-        executor: ToolExecutor,
-        arguments: dict,
-        deadline: float,
+    @staticmethod
+    def _build_customer_arguments(
+        _arguments: dict[str, Any],
+        results: dict[str, Any],
+    ) -> dict[str, Any]:
+        order_result = results.get("get_order")
+        if not isinstance(order_result, dict) or order_result.get("customer_id") is None:
+            raise ValueError("get_order did not return a customer_id")
+        return {"customer_id": order_result["customer_id"]}
+
+    @staticmethod
+    def _build_result(
+        _arguments: dict[str, Any],
+        results: dict[str, Any],
     ):
-        order_result, error = await self.call_child(
-            executor,
-            self.get_order,
-            {"order_id": arguments["order_id"]},
-            deadline,
-        )
-        if error is not None:
-            return None, error
-
-        customer_id = (
-            order_result.get("customer_id")
-            if isinstance(order_result, dict)
-            else None
-        )
-        if customer_id is None:
-            return None, StructuredError(
-                code=ErrorCode.INTERNAL_ERROR,
-                message="get_order did not return a customer_id.",
-                retryable=False,
-                counts_toward_circuit_breaker=False,
-            )
-
-        customer_result, error = await self.call_child(
-            executor,
-            self.get_customer,
-            {"customer_id": customer_id},
-            deadline,
-        )
-        if error is not None:
-            return None, error
+        order_result = results["get_order"]
 
         return {
             "order": order_result,
-            "customer": customer_result,
-        }, None
+            "customer": results["get_customer"],
+        }
