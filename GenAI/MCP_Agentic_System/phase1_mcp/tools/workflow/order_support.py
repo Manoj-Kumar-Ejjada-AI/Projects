@@ -1,18 +1,19 @@
-from typing import ClassVar
+from __future__ import annotations
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
 from errors.framework import ErrorCode, StructuredError
 from tools.base import ToolExecutor, ToolLevel, ToolMetadata
 from tools.composed.order_customer import OrderCustomerContextTool
-from tools.workflow.base import WorkflowTool
+from tools.workflow.base import SequentialWorkflowTool, WorkflowStep
 
 
 class OrderSupportWorkflowInput(BaseModel):
     order_id: int = Field(..., ge=1, description="Order identifier.")
 
 
-class OrderSupportWorkflowTool(WorkflowTool):
+class OrderSupportWorkflowTool(SequentialWorkflowTool):
 
     meta: ClassVar[ToolMetadata] = ToolMetadata(
         name="order_support_workflow",
@@ -28,7 +29,18 @@ class OrderSupportWorkflowTool(WorkflowTool):
     input_model: ClassVar[type[BaseModel]] = OrderSupportWorkflowInput
 
     def __init__(self, order_customer: OrderCustomerContextTool) -> None:
-        self.order_customer = order_customer
+        super().__init__(
+            steps=(
+                WorkflowStep(
+                    name="order_customer_context",
+                    tool=order_customer,
+                    build_arguments=lambda arguments, _results: {
+                        "order_id": arguments["order_id"]
+                    },
+                ),
+            ),
+            result_builder=self._build_result,
+        )
 
     async def run(
         self,
@@ -46,18 +58,20 @@ class OrderSupportWorkflowTool(WorkflowTool):
                 counts_toward_circuit_breaker=False,
             )
 
-        context, error = await self.call_step(
-            executor,
-            self.order_customer,
-            {"order_id": order_id},
-            deadline,
+        return await super().run(
+            executor=executor,
+            arguments=arguments,
+            deadline=deadline,
         )
-        if error is not None:
-            return None, error
-
+    
+    @staticmethod
+    def _build_result(
+        _arguments: dict[str, Any],
+        results: dict[str, Any],
+    ):
         return {
             "workflow": "order_support_workflow",
-            "order_id": order_id,
+            "order_id": _arguments["order_id"],
             "status": "completed",
-            "context": context,
-        }, None
+            "context": results["order_customer_context"],
+        }
