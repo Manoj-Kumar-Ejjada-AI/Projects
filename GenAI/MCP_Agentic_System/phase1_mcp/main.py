@@ -1,3 +1,5 @@
+import os, sys
+from pathlib import Path
 from mcp.client.stdio import stdio_client
 from mcp import StdioServerParameters
 
@@ -40,11 +42,20 @@ async def main():
     # model = "gemini-3.6-flash"
     model = "gemma-4-31b-it"
 
-    server_params = StdioServerParameters(
-        command="python",
-        args=["server.py"]
-    )
-    async with MCPClient(server_params) as mcp_client:
+    server_url = os.getenv("MCP_SERVER_URL","")
+
+    if server_url:
+        server_connection = server_url
+    else:
+        project_dir = Path(__file__).resolve().parent
+        server_path = project_dir / "server.py"
+
+        server_connection = StdioServerParameters(
+            command=sys.executable,
+            args=[str(server_path)],
+            cwd=str(project_dir),
+        )
+    async with MCPClient(server_connection) as mcp_client:
 
         mcp_tools = await mcp_client.list_tools()
 
