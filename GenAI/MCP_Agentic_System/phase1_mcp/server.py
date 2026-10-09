@@ -7,12 +7,38 @@ import argparse
 import os
 from typing import Literal
 
+from pydantic import AnyHttpUrl
+from mcp.server.auth.settings import AuthSettings
+
+from auth.oauth import AuthConfig, build_dev_token_verifier
+
+
 Transport = Literal["stdio", "streamable-http"]
 
-# mcp = MCPServer("Customer Server")
 
-def build_server() -> MCPServer:
-    mcp = MCPServer("Customer Server")
+def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
+    """Create and configure the MCP server and its tools."""
+    server_kwargs = {}
+
+    if auth_config and auth_config.enabled:
+        if not auth_config.dev_access_token:
+            raise ValueError(
+                "MCP_DEV_ACCESS_TOKEN is required for the current development "
+                "authentication verifier"
+            )
+
+        token_verifier = build_dev_token_verifier(auth_config)
+        server_kwargs.update(
+            token_verifier=token_verifier,
+            auth=AuthSettings(
+                issuer_url=AnyHttpUrl(auth_config.issuer_url),
+                resource_server_url=AnyHttpUrl(auth_config.resource_server_url),
+                required_scopes=list(auth_config.required_scopes),
+                validate_token_resource=True,
+            ),
+        )
+
+    mcp = MCPServer("Customer Server", **server_kwargs)
 
     @mcp.tool()
     def get_customer(customer_id: int) -> dict:
@@ -36,7 +62,7 @@ def build_server() -> MCPServer:
             }
         }
 
-        customer = customers[customer_id]
+        customer = customers.get(customer_id)
 
         if customer is None:
             return {
@@ -116,7 +142,7 @@ def build_server() -> MCPServer:
 
     @mcp.tool()
     async def slow_tool(delay: float = 0.0):
-        "Execute slow tool and get response"
+        """Execute slow tool and get response"""
         await asyncio.sleep(delay)
         return {"status": "completed"}
 
@@ -139,12 +165,19 @@ def run_server(
     stdio remains the default for local development.
     Streamable HTTP is configured in stateless mode for remote deployments.
     """
+    auth_config = AuthConfig.from_env()
     if transport == "stdio":
+        if auth_config.enabled:
+            raise ValueError(
+                "MCP_AUTH_ENABLED is only supported for Streamable HTTP; "
+                "stdio is protected by the local process boundary"
+            )
         mcp.run(transport="stdio")
         return
 
     if transport == "streamable-http":
-        mcp.run(
+        http_server = build_server(auth_config)
+        http_server.run(
             transport="streamable-http",
             host=host,
             port=port,

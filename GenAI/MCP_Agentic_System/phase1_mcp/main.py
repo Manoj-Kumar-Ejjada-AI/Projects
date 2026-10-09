@@ -50,12 +50,23 @@ async def main():
         project_dir = Path(__file__).resolve().parent
         server_path = project_dir / "server.py"
 
+        if not server_path.is_file():
+            raise FileNotFoundError(
+                f"MCP server file not found: {server_path}"
+            )
+
         server_connection = StdioServerParameters(
             command=sys.executable,
             args=[str(server_path)],
             cwd=str(project_dir),
         )
-    async with MCPClient(server_connection) as mcp_client:
+
+    access_token = os.getenv("MCP_ACCESS_TOKEN") if server_url else None
+
+    async with MCPClient(
+        server_connection,
+        access_token=access_token,
+    ) as mcp_client:
 
         mcp_tools = await mcp_client.list_tools()
 
