@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings
 
-from auth.oauth import AuthConfig, build_dev_token_verifier
+from auth.oauth import AuthConfig, build_token_verifier
 
 
 Transport = Literal["stdio", "streamable-http"]
@@ -27,7 +27,7 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
                 "authentication verifier"
             )
 
-        token_verifier = build_dev_token_verifier(auth_config)
+        token_verifier = build_token_verifier(auth_config)
         server_kwargs.update(
             token_verifier=token_verifier,
             auth=AuthSettings(
