@@ -1,0 +1,30 @@
+default_effect: deny
+rules:
+  - id: allow-customer-read
+    effect: allow
+    resources:
+      - "tenant:*/get_customer"
+      - "tenant:*/list_customers"
+    actions: ["tool:invoke"]
+    required_scopes: ["mcp:read"]
+
+  - id: allow-order-read
+    effect: allow
+    resources:
+      - "tenant:*/get_order"
+    actions: ["tool:invoke"]
+    required_scopes: ["mcp:read"]
+
+  # The diagnostic slow tool is restricted to callers with an admin scope.
+  # This explicit deny also demonstrates deny-overrides-allow semantics.
+  - id: deny-slow-tool-without-admin
+    effect: deny
+    resources: ["tenant:*/slow_tool"]
+    actions: ["tool:invoke"]
+    excluded_scopes: ["mcp:admin"]
+
+  - id: allow-slow-tool-admin
+    effect: allow
+    resources: ["tenant:*/slow_tool"]
+    actions: ["tool:invoke"]
+    required_scopes: ["mcp:admin"]
