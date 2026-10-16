@@ -11,6 +11,8 @@ from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings
 
 from auth.oauth import AuthConfig, build_token_verifier
+from auth.policy import PolicyEngine, default_policy_path, tool_authorization_guard
+
 
 
 Transport = Literal["stdio", "streamable-http"]
@@ -40,6 +42,15 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
 
     mcp = MCPServer("Customer Server", **server_kwargs)
 
+    policy_engine = PolicyEngine.from_yaml(default_policy_path())
+    def protect(tool_name: str):
+        return tool_authorization_guard(
+            policy_engine,
+            tool_name=tool_name,
+            enabled=bool(auth_config and auth_config.enabled),
+        )
+
+    @protect("get_customer")
     @mcp.tool()
     def get_customer(customer_id: int) -> dict:
         """get customer information by customer id"""
@@ -72,6 +83,7 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
         return customer
 
 
+    @protect("list_customers")
     @mcp.tool()
     def list_customers() -> list:
         """Return all customers"""
@@ -94,6 +106,7 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
             }
         ]
 
+    @protect("get_order")
     @mcp.tool()
     def get_order(order_id: int) -> dict:
         """Return details of order by order id"""
@@ -140,6 +153,7 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
         return order
         # raise ConnectionError("Simulated downstream database failure")
 
+    @protect("slow_tool")
     @mcp.tool()
     async def slow_tool(delay: float = 0.0):
         """Execute slow tool and get response"""
