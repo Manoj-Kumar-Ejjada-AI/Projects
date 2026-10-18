@@ -402,13 +402,13 @@ def build_dev_token_verifier(config: AuthConfig) -> StaticTokenVerifier:
             "MCP_DEV_ACCESS_TOKEN must be set when MCP authentication is enabled"
         )
 
-    resource = AnyHttpUrl(config.resource_server_url)
+    #resource = AnyHttpUrl(config.resource_server_url)
 
     access_token = AccessToken(
         token=config.dev_access_token,
         client_id="local-dev-agent",
         scopes=list(config.required_scopes),
-        resource=resource,
+        resource=config.resource_server_url,
         subject="local-dev-user",
         claims={
             "tenant": "default",
