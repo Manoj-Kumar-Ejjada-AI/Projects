@@ -4,6 +4,7 @@ from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from contextlib import AsyncExitStack
+import httpx2
 
 class MCPClient:
     def __init__(self, server_params, *, access_token: str | None = None):
@@ -23,17 +24,28 @@ class MCPClient:
         try:
             if isinstance(self.server_params, str):
                 if self.access_token:
-                    headers = {
-                        "Authorization": f"Bearer {self.access_token}"
-                    }
-                    http_client = streamable_http_client(
+                    configured_http_client = httpx2.AsyncClient(
+                        headers={
+                            "Authorization": f"Bearer {self.access_token}"
+                        },
+                        timeout=httpx2.Timeout(30.0, read=300.0),
+                    )
+
+                    await self.exit_stack.enter_async_context(
+                        configured_http_client
+                    )
+
+                    http_transport = streamable_http_client(
                         self.server_params,
-                        headers=headers,
+                        http_client=configured_http_client,
                     )
                 else:
-                    http_client = streamable_http_client(self.server_params)
-                self.read, self.write = await self.exit_stack.enter_async_context(
-                    http_client
+                    http_transport = streamable_http_client(
+                        self.server_params
+                    )
+
+                self.read, self.write = (
+                    await self.exit_stack.enter_async_context(http_transport)
                 )
             else:
                 self.read, self.write = await self.exit_stack.enter_async_context(
