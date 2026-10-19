@@ -190,6 +190,31 @@ class PolicyEngine:
         return True
 
 
+def filter_tools_for_principal(
+    policy_engine: PolicyEngine,
+    tools: list[Any] | tuple[Any, ...],
+    principal: Principal | None,
+) -> list[Any]:
+    """Return only tools the principal is allowed to invoke."""
+    
+    visible: list[Any] = []
+    for tool in tools:
+        tool_name = getattr(tool, "name", None)
+        if not isinstance(tool_name, str) or not tool_name:
+            # Malformed tool descriptors should never become visible.
+            continue
+        tenant = principal.tenant if principal is not None else None
+        resource = f"tenant:{tenant if tenant else 'unknown'}/{tool_name}"
+        decision = policy_engine.evaluate(
+            principal,
+            action="tool:invoke",
+            resource=resource,
+        )
+        if decision.allowed:
+            visible.append(tool)
+    return visible
+
+
 def default_policy_path() -> Path:
     """Resolve policy configuration without depending on the caller's cwd."""
     configured_path = os.getenv("MCP_POLICY_PATH")
@@ -207,6 +232,14 @@ def _get_sdk_access_token():
             "Installed MCP SDK does not expose its authenticated access-token context"
         ) from exc
     return get_access_token()
+
+
+def current_principal_from_sdk() -> Principal | None:
+    """Return a normalized principal from the MCP SDK's verified auth context."""
+    access_token = _get_sdk_access_token()
+    if access_token is None:
+        return None
+    return principal_from_access_token(access_token)
 
 
 def tool_authorization_guard(
