@@ -2,7 +2,7 @@ from __future__ import annotations
 from mcp.server.mcpserver import MCPServer
 # from fastmcp import FastMCP
 import asyncio
-
+import logging
 import argparse
 import os
 from typing import Literal
@@ -11,16 +11,59 @@ from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings
 
 from auth.oauth import AuthConfig, build_token_verifier
-from auth.policy import PolicyEngine, default_policy_path, tool_authorization_guard
+from auth.policy import (
+    PolicyEngine,
+    current_principal_from_sdk,
+    default_policy_path,
+    filter_tools_for_principal,
+    tool_authorization_guard,
+)
 
 
+logger = logging.getLogger(__name__)
 
 Transport = Literal["stdio", "streamable-http"]
+
+
+class PolicyAwareMCPServer(MCPServer):
+    """MCPServer that filters discovery by the authenticated principal."""
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        policy_engine: PolicyEngine,
+        authorization_enabled: bool,
+        **kwargs,
+    ) -> None:
+        self._policy_engine = policy_engine
+        self._authorization_enabled = authorization_enabled
+        super().__init__(name, **kwargs)
+
+    async def list_tools(self):
+        tools = await super().list_tools()
+        if not self._authorization_enabled:
+            return tools
+
+        principal = current_principal_from_sdk()
+        visible_tools = filter_tools_for_principal(
+            self._policy_engine,
+            tools,
+            principal,
+        )
+        hidden_count = len(tools) - len(visible_tools)
+        if hidden_count:
+            logger.debug(
+                "Filtered %d MCP tool(s) from discovery for the authenticated principal",
+                hidden_count,
+            )
+        return visible_tools
 
 
 def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
     """Create and configure the MCP server and its tools."""
     server_kwargs = {}
+    policy_engine = PolicyEngine.from_yaml(default_policy_path())
 
     if auth_config and auth_config.enabled:
         if not auth_config.dev_access_token:
@@ -40,9 +83,13 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
             ),
         )
 
-    mcp = MCPServer("Customer Server", **server_kwargs)
+    mcp = PolicyAwareMCPServer(
+        "Customer Server",
+        policy_engine=policy_engine,
+        authorization_enabled=bool(auth_config and auth_config.enabled),
+        **server_kwargs,
+    )
 
-    policy_engine = PolicyEngine.from_yaml(default_policy_path())
     def protect(tool_name: str):
         return tool_authorization_guard(
             policy_engine,
@@ -50,6 +97,7 @@ def build_server(auth_config: AuthConfig | None = None) -> MCPServer:
             enabled=bool(auth_config and auth_config.enabled),
         )
 
+    
     @protect("get_customer")
     @mcp.tool()
     def get_customer(customer_id: int) -> dict:

@@ -126,27 +126,38 @@ async def main():
                 )
 
             mcp_tool_by_name = {tool.name: tool for tool in mcp_tools.tools}
-            atomic_tools = {
-                name: AtomicMCPTool(mcp_tool_by_name[name])
-                for name in ("get_order", "get_customer")
-            }
+            required_hierarchy_tools = {"get_order", "get_customer"}
+            missing_hierarchy_tools = required_hierarchy_tools - set(mcp_tool_by_name)
+            local_tools = {}
+        
+            if not missing_hierarchy_tools:
+                atomic_tools = {
+                    name: AtomicMCPTool(mcp_tool_by_name[name])
+                    for name in required_hierarchy_tools
+                }
 
-            order_customer_context = OrderCustomerContextTool(
-                get_order=atomic_tools["get_order"],
-                get_customer=atomic_tools["get_customer"],
-            )
-            order_support_workflow = OrderSupportWorkflowTool(
-                order_customer=order_customer_context
-            )
+                order_customer_context = OrderCustomerContextTool(
+                    get_order=atomic_tools["get_order"],
+                    get_customer=atomic_tools["get_customer"],
+                )
+                order_support_workflow = OrderSupportWorkflowTool(
+                    order_customer=order_customer_context
+                )
 
-            local_tools = {
-                order_customer_context.meta.name: order_customer_context,
-                order_support_workflow.meta.name: order_support_workflow,
-            }
+                local_tools = {
+                    order_customer_context.meta.name: order_customer_context,
+                    order_support_workflow.meta.name: order_support_workflow,
+                }
 
-            for local_tool in local_tools.values():
-                tool_executor.register_local_tool(local_tool)
-                tool_registry.register_local_tool(local_tool)
+                for local_tool in local_tools.values():
+                    tool_executor.register_local_tool(local_tool)
+                    tool_registry.register_local_tool(local_tool)
+            else:
+                print(
+                    "Skipping order/customer composed and workflow tools because "
+                    "the authenticated server did not expose required primitive(s): "
+                    + ", ".join(sorted(missing_hierarchy_tools))
+                )
 
             agent = Agent(llm, model, tool_executor, tool_registry)
 
