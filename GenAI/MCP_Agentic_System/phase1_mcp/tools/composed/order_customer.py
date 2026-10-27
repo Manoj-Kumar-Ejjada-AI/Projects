@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
+from validation.schemas import PositiveIdentifier, StrictToolArguments
 
 from tools.atomic.base import AtomicMCPTool
 from tools.base import ToolLevel, ToolMetadata
 from tools.composed.base import SequentialComposedTool, ToolStep
 
 
-class OrderCustomerInput(BaseModel):
-    order_id: int = Field(..., ge=1, description="Order identifier.")
-
+class OrderCustomerInput(StrictToolArguments):
+    order_id: PositiveIdentifier
 
 class OrderCustomerContextTool(SequentialComposedTool):
     """Deterministically execute Atomic get_order -> Atomic get_customer."""
