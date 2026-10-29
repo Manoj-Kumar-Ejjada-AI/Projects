@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
+from validation.schemas import PositiveIdentifier, StrictToolArguments
 
 from errors.framework import ErrorCode, StructuredError
 from tools.base import ToolExecutor, ToolLevel, ToolMetadata
@@ -9,9 +10,8 @@ from tools.composed.order_customer import OrderCustomerContextTool
 from tools.workflow.base import SequentialWorkflowTool, WorkflowStep
 
 
-class OrderSupportWorkflowInput(BaseModel):
-    order_id: int = Field(..., ge=1, description="Order identifier.")
-
+class OrderSupportWorkflowInput(StrictToolArguments):
+    order_id: PositiveIdentifier
 
 class OrderSupportWorkflowTool(SequentialWorkflowTool):
 
